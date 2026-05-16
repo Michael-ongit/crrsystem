@@ -1,0 +1,139 @@
+// components/Layout.tsx - Main layout with sidebar and navigation
+import React, { useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
+import { User, UserRole } from '../types';
+
+interface LayoutProps {
+  children: React.ReactNode;
+  currentUser: User | null;
+  currentRole: UserRole;
+  onLogout: () => void;
+}
+
+const Layout: React.FC<LayoutProps> = ({
+  children,
+  currentUser,
+  currentRole,
+  onLogout,
+}) => {
+  const location = useLocation();
+  const [isCollapsed, setIsCollapsed] = useState(false);
+
+  const navItems = [
+    {
+      label: 'Execution',
+      path: '/execution',
+      allowedRoles: [UserRole.EXECUTION, UserRole.ADMIN],
+      icon: 'EX',
+    },
+    {
+      label: 'Planning',
+      path: '/planning',
+      allowedRoles: [UserRole.PLANNING, UserRole.ADMIN],
+      icon: 'PL',
+    },
+    {
+      label: 'Production',
+      path: '/production',
+      allowedRoles: [UserRole.PRODUCTION, UserRole.ADMIN],
+      icon: 'PR',
+    },
+    {
+      label: 'Dispatch Summary',
+      path: '/dispatch-summary',
+      allowedRoles: [UserRole.PRODUCTION, UserRole.ADMIN],
+      icon: 'DS',
+    },
+    {
+      label: 'Dashboard',
+      path: '/dashboard',
+      allowedRoles: [UserRole.ADMIN],
+      icon: 'DB',
+    },
+  ];
+
+  const visibleNavItems = navItems.filter((item) =>
+    item.allowedRoles.includes(currentRole)
+  );
+
+  return (
+    <div className="flex h-screen bg-gray-100">
+      <aside
+        className={`relative flex flex-col bg-[#003F72] text-white shadow-lg transition-all duration-300 ${
+          isCollapsed ? 'w-20' : 'w-64'
+        }`}
+      >
+        <div className="h-20 flex items-center justify-between gap-2 border-b border-white/15 px-4">
+          {!isCollapsed && (
+            <h1 className="text-base font-bold leading-tight">
+              Concrete Requisition & Reconciliation System
+            </h1>
+          )}
+          <button
+            type="button"
+            onClick={() => setIsCollapsed((value) => !value)}
+            className="ml-auto h-10 w-10 rounded-md border border-white/20 bg-white/10 text-lg font-semibold text-white hover:bg-white/20"
+            aria-label={isCollapsed ? 'Expand side panel' : 'Collapse side panel'}
+            title={isCollapsed ? 'Expand side panel' : 'Collapse side panel'}
+          >
+            {isCollapsed ? '>' : '<'}
+          </button>
+        </div>
+
+        {!isCollapsed && (
+          <div className="p-4 border-b border-white/15">
+            <p className="text-sm font-semibold">{currentUser?.name}</p>
+            <p className="text-xs text-white/75">{currentRole}</p>
+            <p className="text-xs text-white/60 truncate">{currentUser?.email}</p>
+          </div>
+        )}
+
+        <nav className="flex-1 p-4 space-y-2">
+          {visibleNavItems.map((item) => (
+            <Link
+              key={item.path}
+              to={item.path}
+              title={isCollapsed ? item.label : undefined}
+              className={`flex items-center rounded-lg transition ${
+                isCollapsed ? 'justify-center px-2 py-3' : 'px-4 py-2'
+              } ${
+                location.pathname === item.path
+                  ? 'bg-white text-[#003F72]'
+                  : 'text-white/85 hover:bg-white/10'
+              }`}
+            >
+              <span className={`text-xs font-bold tracking-wide ${isCollapsed ? '' : 'mr-2'}`}>
+                {item.icon}
+              </span>
+              {!isCollapsed && item.label}
+            </Link>
+          ))}
+        </nav>
+
+        <div className="p-4 border-t border-white/15">
+          <button
+            onClick={onLogout}
+            title={isCollapsed ? 'Sign out' : undefined}
+            className={`w-full rounded text-sm transition bg-[#002B4E] text-white/90 hover:bg-white/10 ${
+              isCollapsed ? 'px-2 py-3 text-center' : 'px-3 py-2 text-left'
+            }`}
+          >
+            {isCollapsed ? 'Out' : 'Sign out'}
+          </button>
+        </div>
+
+        {!isCollapsed && (
+          <div className="p-4 text-xs text-white/70 border-t border-white/15">
+            <p>dev mode</p>
+          </div>
+        )}
+      </aside>
+
+      <main className="flex-1 overflow-auto">
+        <div className="p-6 lg:p-8">{children}</div>
+      </main>
+    </div>
+  );
+};
+
+export default Layout;

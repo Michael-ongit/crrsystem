@@ -1,0 +1,56 @@
+# Backend
+backend/venv/
+backend/__pycache__/
+backend/*.pyc
+backend/*.pyo
+backend/.env
+backend/.env.local
+backend/.DS_Store
+backend/dist/
+backend/build/
+backend/egg-info/
+backend/.pytest_cache/
+backend/htmlcov/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.env.local
+frontend/.env
+frontend/npm-debug.log
+frontend/yarn-error.log
+frontend/.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.sublime-project
+.sublime-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Database
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.mdf
+*.ldf
+*.lock
+
+# Logs
+*.log
+logs/
+fe_logs/
+
+# Environment
+.env
+.env.local
+.env.*.local
