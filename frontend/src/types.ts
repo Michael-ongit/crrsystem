@@ -62,9 +62,10 @@ export interface ConcreteRequisition {
   contact_person?: string;
   contact_number?: string;
   status: RequisitionStatus;
-  approval_status?: 'Approved' | 'Rejected' | 'Pending';
+  approval_status?: 'Approved' | 'Sent Back' | 'Pending' | 'Rejected';
   planning_remarks?: string;
   validation_timestamp?: string;
+  sent_back_expires_at?: string;
   created_at: string;
   updated_at: string;
 }
@@ -106,7 +107,7 @@ export interface PlanningValidation {
   validated_by: string;
   planning_remarks?: string;
   validation_timestamp: string;
-  is_approved: 'Approved' | 'Rejected' | 'Pending';
+  is_approved: 'Approved' | 'Sent Back' | 'Pending' | 'Rejected';
 }
 
 export interface ProductionDispatch {

@@ -76,7 +76,49 @@ def init_db():
         migrate_auth_session_columns()
     migrate_concrete_requisition_columns()
     migrate_production_dispatch_columns()
+    seed_requisition_elements_if_empty()
+    seed_supply_sequences_from_existing_requisitions()
     logger.info("Database tables initialized")
+
+
+def seed_requisition_elements_if_empty():
+    """Populate master reference lookup rows once when the table is empty."""
+    try:
+        from models import RequisitionElement
+        from seed import seed_reference_data
+
+        with SessionLocal() as db:
+            has_rows = db.query(RequisitionElement.id).first() is not None
+            if not has_rows:
+                seed_reference_data(db=db, clear_existing=True)
+    except Exception as e:
+        logger.warning(f"Reference data seed skipped or failed: {e}")
+
+
+def seed_supply_sequences_from_existing_requisitions():
+    """Bootstrap supply sequence rows from legacy requisition IDs once."""
+    try:
+        from models import ConcreteRequisition, SupplySequence
+
+        with SessionLocal() as db:
+            existing_sequences = {
+                base_code for (base_code,) in db.query(SupplySequence.base_code).all()
+            }
+            highest_by_base: dict[str, int] = {}
+            for (supply_id,) in db.query(ConcreteRequisition.supply_id).all():
+                base, _, suffix = supply_id.rpartition("-")
+                if not base or not suffix.isdigit() or base in existing_sequences:
+                    continue
+                highest_by_base[base] = max(highest_by_base.get(base, 0), int(suffix))
+
+            for base_code, current_sequence in highest_by_base.items():
+                db.add(SupplySequence(base_code=base_code, current_sequence=current_sequence))
+
+            if highest_by_base:
+                db.commit()
+                logger.info(f"Seeded {len(highest_by_base)} supply sequence rows from existing requisitions")
+    except Exception as e:
+        logger.warning(f"Supply sequence bootstrap skipped or failed: {e}")
 
 
 def migrate_concrete_requisition_columns():

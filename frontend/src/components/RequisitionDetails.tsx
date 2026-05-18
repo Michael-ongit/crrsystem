@@ -4,6 +4,7 @@ import { ConcreteRequisition } from '../types';
 interface RequisitionDetailsProps {
   requisition: Partial<ConcreteRequisition>;
   hideWorkflowFields?: boolean;
+  hidePlanningFields?: boolean;
 }
 
 const display = (value: unknown) => {
@@ -30,7 +31,11 @@ const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title
   </section>
 );
 
-const RequisitionDetails: React.FC<RequisitionDetailsProps> = ({ requisition, hideWorkflowFields = false }) => (
+const RequisitionDetails: React.FC<RequisitionDetailsProps> = ({
+  requisition,
+  hideWorkflowFields = false,
+  hidePlanningFields = false,
+}) => (
   <div className="space-y-5">
     <Section title="Reference Details">
       <DetailItem label="Supply ID" value={requisition.supply_id} />
@@ -65,9 +70,13 @@ const RequisitionDetails: React.FC<RequisitionDetailsProps> = ({ requisition, hi
       <DetailItem label="Placement By" value={requisition.placement_by} />
       <DetailItem label="Contact Person / Engineer" value={requisition.contact_person} />
       <DetailItem label="Contact Number" value={requisition.contact_number} />
-      {!hideWorkflowFields && <DetailItem label="Process Status" value={requisition.status} />}
-      {!hideWorkflowFields && <DetailItem label="Planning Decision" value={requisition.approval_status} />}
-      {!hideWorkflowFields && <DetailItem label="Planning Remarks" value={requisition.planning_remarks} />}
+      {!hideWorkflowFields && <DetailItem label="Status" value={requisition.status} />}
+      {!hideWorkflowFields && !hidePlanningFields && (
+        <DetailItem label="Planning Decision" value={requisition.approval_status} />
+      )}
+      {!hideWorkflowFields && !hidePlanningFields && (
+        <DetailItem label="Planning Remarks" value={requisition.planning_remarks} />
+      )}
     </Section>
   </div>
 );

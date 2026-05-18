@@ -29,6 +29,9 @@ interface DispatchOrder {
 const fieldClass =
   'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-[#003F72] focus:ring-2 focus:ring-[#003F72]/15';
 
+const tableHeaderClass = 'px-4 py-3 text-left text-xs font-bold uppercase text-[#003F72]';
+const numericTableHeaderClass = 'px-4 py-3 text-right text-xs font-bold uppercase text-[#003F72]';
+
 const today = () => new Date().toISOString().slice(0, 10);
 
 const combineDateTime = (date: string, time: string) => new Date(`${date}T${time}`).toISOString();
@@ -211,7 +214,7 @@ const DispatchSummaryView: React.FC = () => {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Dispatch Summary</h1>
+          <h1 className="text-[2.15rem] font-bold leading-tight text-gray-900">Dispatch Summary</h1>
           <p className="text-sm text-gray-600">Acknowledge site receipt and reconcile dispatched orders</p>
         </div>
         <RequisitionFilters
@@ -219,7 +222,7 @@ const DispatchSummaryView: React.FC = () => {
           onChange={setFilters}
           resultCount={filteredOrders.length + filteredHistory.length}
           totalCount={orders.length + history.length}
-          className="xl:w-[760px]"
+          className="xl:w-fit"
         />
       </div>
 
@@ -229,28 +232,28 @@ const DispatchSummaryView: React.FC = () => {
         </div>
       )}
 
-      <div className="overflow-hidden rounded-lg bg-white shadow-md">
+      <div className="overflow-hidden rounded-lg bg-white shadow-md transition-shadow duration-200 ease-out hover:shadow-lg">
         <div className="bg-[#003F72] px-5 py-4 text-white">
-          <h2 className="text-lg font-semibold">Dispatched Orders ({filteredOrders.length})</h2>
+          <h2 className="text-xl font-semibold">Dispatched Orders ({filteredOrders.length})</h2>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1060px]">
             <thead className="bg-gray-100">
               <tr>
-                <th className="px-4 py-3 text-left text-xs font-bold uppercase text-gray-600">Supply ID</th>
-                <th className="px-4 py-3 text-left text-xs font-bold uppercase text-gray-600">Date</th>
-                <th className="px-4 py-3 text-left text-xs font-bold uppercase text-gray-600">Location</th>
-                <th className="px-4 py-3 text-left text-xs font-bold uppercase text-gray-600">Vehicle</th>
-                <th className="px-4 py-3 text-left text-xs font-bold uppercase text-gray-600">Plant</th>
-                <th className="px-4 py-3 text-right text-xs font-bold uppercase text-gray-600">Qty Dispatched</th>
-                <th className="px-4 py-3 text-left text-xs font-bold uppercase text-gray-600">Dispatch Time</th>
-                <th className="px-4 py-3 text-left text-xs font-bold uppercase text-gray-600">Receipt Location</th>
-                <th className="px-4 py-3 text-left text-xs font-bold uppercase text-gray-600">Action</th>
+                <th className={tableHeaderClass}>Supply ID</th>
+                <th className={tableHeaderClass}>Date</th>
+                <th className={tableHeaderClass}>Location</th>
+                <th className={tableHeaderClass}>Vehicle</th>
+                <th className={tableHeaderClass}>Plant</th>
+                <th className={numericTableHeaderClass}>Qty Dispatched</th>
+                <th className={tableHeaderClass}>Dispatch Time</th>
+                <th className={tableHeaderClass}>Receipt Location</th>
+                <th className={tableHeaderClass}>Action</th>
               </tr>
             </thead>
             <tbody>
               {filteredOrders.map((order) => (
-                <tr key={order.dispatch.dispatch_id} className="border-t border-gray-100 hover:bg-gray-50">
+                <tr key={order.dispatch.dispatch_id} className="border-t border-gray-100 transition-colors duration-150 ease-out hover:bg-blue-50/45">
                   <td className="px-4 py-3 font-mono text-sm">{order.dispatch.supply_id}</td>
                   <td className="px-4 py-3 text-sm">{order.requisition ? formatOrderDate(order.requisition) : '-'}</td>
                   <td className="px-4 py-3 text-sm">{order.requisition?.location || '-'}</td>
@@ -263,7 +266,7 @@ const DispatchSummaryView: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => openReconcile(order)}
-                      className="h-8 w-8 rounded bg-[#003F72] text-lg font-semibold leading-none text-white"
+                      className="h-8 w-8 rounded bg-[#003F72] text-lg font-semibold leading-none text-white shadow-sm transition-all duration-200 ease-out hover:bg-[#002B4E] hover:shadow"
                       aria-label="Add acknowledgement"
                       title="Add acknowledgement"
                     >

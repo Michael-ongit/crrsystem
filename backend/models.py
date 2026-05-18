@@ -1,5 +1,5 @@
 # models.py - SQLAlchemy ORM models for MVDP System
-from sqlalchemy import Boolean, Column, String, DateTime, Float, Enum, ForeignKey, func
+from sqlalchemy import Boolean, Column, String, DateTime, Float, Enum, ForeignKey, Index, Integer, func
 from sqlalchemy.orm import relationship
 from database import Base
 from enum import Enum as PyEnum
@@ -72,6 +72,54 @@ class AuthSession(Base):
     user = relationship("User", back_populates="sessions")
 
 
+class RequisitionElement(Base):
+    """
+    Master reference row for concrete requisition structural hierarchy.
+
+    Each record represents one valid Location -> Structure Type -> Structure Name
+    -> Structure ID -> Element ID path sourced from the project requisition slip.
+    The frontend uses this table through metadata endpoints to build dynamic,
+    searchable cascading dropdowns without hardcoding site reference data.
+    """
+    __tablename__ = "requisition_elements"
+    __table_args__ = (
+        Index("idx_location_type", "location", "structure_type"),
+        Index("idx_type_name", "location", "structure_type", "structure_name"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    location = Column(String(100), nullable=False)
+    structure_type = Column(String(100), nullable=False)
+    structure_name = Column(String(100), nullable=False)
+    structure_id = Column(String(100), nullable=False)
+    element_id = Column(String(100), nullable=True)
+
+    def __repr__(self):
+        return (
+            "<RequisitionElement("
+            f"location={self.location}, type={self.structure_type}, "
+            f"name={self.structure_name}, structure_id={self.structure_id}, "
+            f"element_id={self.element_id})>"
+        )
+
+
+class SupplySequence(Base):
+    """
+    Atomic supply ID sequence tracker keyed by immutable generated base code.
+
+    This table replaces ad-hoc LIKE scans of existing requisitions. A row is
+    locked and incremented for each new requisition sharing the same
+    MVDP-{site}-{structure}-{structure_id}-{YYMMDD} base signature.
+    """
+    __tablename__ = "supply_sequences"
+
+    base_code = Column(String(150), primary_key=True)
+    current_sequence = Column(Integer, nullable=False, default=0)
+
+    def __repr__(self):
+        return f"<SupplySequence(base_code={self.base_code}, current_sequence={self.current_sequence})>"
+
+
 class ConcreteRequisition(Base):
     """
     Core model for concrete supply requisitions.
@@ -137,7 +185,7 @@ class PlanningValidation(Base):
     validated_by = Column(UUID_COLUMN, ForeignKey("users.id"), nullable=False)
     planning_remarks = Column(String(2000), nullable=True)
     validation_timestamp = Column(DateTime, nullable=False, server_default=func.now())
-    is_approved = Column(String(10), nullable=False, default="Pending")  # Approved, Rejected, Pending
+    is_approved = Column(String(10), nullable=False, default="Pending")  # Approved, Sent Back, Pending
     
     # Relationships
     requisition = relationship("ConcreteRequisition", back_populates="planning_validation")

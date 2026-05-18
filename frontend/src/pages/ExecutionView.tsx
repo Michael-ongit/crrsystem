@@ -1,7 +1,8 @@
 // pages/ExecutionView.tsx - Execution team requisition form
 import React, { useEffect, useMemo, useState } from 'react';
-import { useForm } from 'react-hook-form';
-import { requisitionAPI, userAPI } from '../api';
+import { Controller, useForm } from 'react-hook-form';
+import Select from 'react-select';
+import { hierarchyAPI, requisitionAPI, userAPI } from '../api';
 import PastRequisitionsTable from '../components/PastRequisitionsTable';
 import RequisitionFilters, {
   defaultRequisitionFilters,
@@ -10,6 +11,7 @@ import RequisitionFilters, {
   RequisitionFilterState,
 } from '../components/RequisitionFilters';
 import RequisitionDetails from '../components/RequisitionDetails';
+import StatusBadge from '../components/StatusBadge';
 import { ConcreteRequisition, RequisitionStatus, User } from '../types';
 
 interface ExecutionViewProps {
@@ -88,26 +90,36 @@ const getErrorMessage = (error: any, fallback: string) => {
 const numberOrUndefined = (value?: number) =>
   typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 
-const locationOptions = ['Gorai IC', 'Charkop IC', 'Gorai Jetty', 'Main Carraigeway', 'Casting Yard'];
-const structureTypeOptions = ['Permanent', 'Enabling'];
-const structureNameOptions = [
-  'Pile',
-  'Pile Cap',
-  'Pier',
-  'Pier Cap',
-  'I-Girder',
-  'Segment',
-  'Diaphragm',
-  'Deck Slab',
-  'Voided Slab',
-];
 const gradeOptions = ['M-10', 'M-20', 'M-25', 'M-30', 'M-45', 'M-45P', 'M-50', 'M-55', 'M-60'];
+type SelectOption = { value: string; label: string };
+const toOptions = (values: string[]): SelectOption[] => values.map((value) => ({ value, label: value }));
 
 const fieldClass =
   'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-[#003F72] focus:ring-2 focus:ring-[#003F72]/15';
 
 const readOnlyClass =
   'w-full rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-700';
+
+const tableHeaderClass = 'px-4 py-3 text-left text-xs font-bold uppercase text-[#003F72]';
+const numericTableHeaderClass = 'px-4 py-3 text-right text-xs font-bold uppercase text-[#003F72]';
+const tableActionButtonClass =
+  'rounded bg-[#003F72] px-3 py-1 text-xs font-semibold text-white shadow-sm transition-all duration-200 ease-out hover:bg-[#002B4E] hover:shadow';
+
+const selectClassNames = {
+  control: (state: any) =>
+    `min-h-[38px] rounded-md border bg-white text-sm shadow-sm ${
+      state.isFocused ? 'border-[#003F72] ring-2 ring-[#003F72]/15' : 'border-gray-300'
+    }`,
+  valueContainer: () => 'px-2',
+  input: () => 'text-sm text-gray-900',
+  placeholder: () => 'text-sm text-gray-400',
+  singleValue: () => 'text-sm text-gray-900',
+  menu: () => 'z-50 rounded-md border border-gray-200 bg-white text-sm shadow-lg',
+  option: (state: any) =>
+    `cursor-pointer px-3 py-2 ${
+      state.isSelected ? 'bg-[#003F72] text-white' : state.isFocused ? 'bg-[#003F72]/10 text-gray-900' : 'text-gray-900'
+    }`,
+};
 
 const Field: React.FC<{
   label: string;
@@ -137,6 +149,7 @@ const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title
 const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
   const {
     register,
+    control,
     handleSubmit,
     watch,
     setValue,
@@ -148,6 +161,11 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
   });
 
   const [users, setUsers] = useState<User[]>([]);
+  const [locationOptions, setLocationOptions] = useState<SelectOption[]>([]);
+  const [structureTypeOptions, setStructureTypeOptions] = useState<SelectOption[]>([]);
+  const [structureNameOptions, setStructureNameOptions] = useState<SelectOption[]>([]);
+  const [structureIdOptions, setStructureIdOptions] = useState<SelectOption[]>([]);
+  const [elementIdOptions, setElementIdOptions] = useState<SelectOption[]>([]);
   const [orders, setOrders] = useState<ConcreteRequisition[]>([]);
   const [drafts, setDrafts] = useState<DraftOrder[]>([]);
   const [filters, setFilters] = useState<RequisitionFilterState>(defaultRequisitionFilters);
@@ -155,6 +173,7 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
   const [submitting, setSubmitting] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [activeDraftId, setActiveDraftId] = useState<string | null>(null);
+  const [editingSupplyId, setEditingSupplyId] = useState<string | null>(null);
   const [viewingOrder, setViewingOrder] = useState<ConcreteRequisition | null>(null);
   const [successMessage, setSuccessMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -163,6 +182,7 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
   const draftStorageKey = `executionDrafts:${currentUser?.id || 'anonymous'}`;
 
   const locationValue = watch('location');
+  const structureTypeValue = watch('structure_type');
   const structureNameValue = watch('structure_name');
   const structureIdValue = watch('structure_id');
   const theoreticalQty = watch('theoretical_qty');
@@ -208,8 +228,12 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
   useEffect(() => {
     const fetchInitialData = async () => {
       try {
-        const fetchedUsers = await userAPI.getUsers();
+        const [fetchedUsers, locations] = await Promise.all([
+          userAPI.getUsers(),
+          hierarchyAPI.getLocations(),
+        ]);
         setUsers(fetchedUsers);
+        setLocationOptions(toOptions(locations));
         loadDrafts();
         await fetchOrders();
       } catch (error) {
@@ -224,11 +248,56 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
   }, [currentUser?.id]);
 
   useEffect(() => {
+    if (!locationValue) {
+      setStructureTypeOptions([]);
+      return;
+    }
+    hierarchyAPI.getStructureTypes(locationValue)
+      .then((values) => setStructureTypeOptions(toOptions(values)))
+      .catch((error) => console.error('Failed to fetch structure types:', error));
+  }, [locationValue]);
+
+  useEffect(() => {
+    if (!locationValue || !structureTypeValue) {
+      setStructureNameOptions([]);
+      return;
+    }
+    hierarchyAPI.getStructureNames(locationValue, structureTypeValue)
+      .then((values) => setStructureNameOptions(toOptions(values)))
+      .catch((error) => console.error('Failed to fetch structure names:', error));
+  }, [locationValue, structureTypeValue]);
+
+  useEffect(() => {
+    if (!locationValue || !structureTypeValue || !structureNameValue) {
+      setStructureIdOptions([]);
+      return;
+    }
+    hierarchyAPI.getStructureIds(locationValue, structureTypeValue, structureNameValue)
+      .then((values) => setStructureIdOptions(toOptions(values)))
+      .catch((error) => console.error('Failed to fetch structure IDs:', error));
+  }, [locationValue, structureNameValue, structureTypeValue]);
+
+  useEffect(() => {
+    if (!locationValue || !structureTypeValue || !structureNameValue || !structureIdValue) {
+      setElementIdOptions([]);
+      return;
+    }
+    hierarchyAPI.getElementIds(locationValue, structureTypeValue, structureNameValue, structureIdValue)
+      .then((values) => setElementIdOptions(toOptions(values)))
+      .catch((error) => console.error('Failed to fetch element IDs:', error));
+  }, [locationValue, structureIdValue, structureNameValue, structureTypeValue]);
+
+  useEffect(() => {
     const difference = Number(theoreticalQty || 0) - Number(actualQty || 0);
     setValue('qty_difference', Number.isFinite(difference) ? Number(difference.toFixed(2)) : undefined);
   }, [actualQty, setValue, theoreticalQty]);
 
   useEffect(() => {
+    if (editingSupplyId) {
+      setGeneratedSupplyId(editingSupplyId);
+      return;
+    }
+
     const canPreview =
       locationValue?.trim().length >= 3 &&
       structureNameValue?.trim().length > 0 &&
@@ -254,11 +323,12 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
     }, 350);
 
     return () => window.clearTimeout(timeoutId);
-  }, [locationValue, structureNameValue, structureIdValue]);
+  }, [editingSupplyId, locationValue, structureNameValue, structureIdValue]);
 
   const openNewOrder = () => {
     reset(defaultValues(currentUser));
     setActiveDraftId(null);
+    setEditingSupplyId(null);
     setGeneratedSupplyId('');
     setIsModalOpen(true);
   };
@@ -266,11 +336,68 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
   const resumeDraft = (draft: DraftOrder) => {
     reset(draft.data);
     setActiveDraftId(draft.draft_id);
+    setEditingSupplyId(null);
     setIsModalOpen(true);
   };
 
+  const optionFor = (options: SelectOption[], value?: string) =>
+    options.find((option) => option.value === value) || (value ? { value, label: value } : null);
+
   const deleteDraft = (draftId: string) => {
     saveDrafts(drafts.filter((draft) => draft.draft_id !== draftId));
+  };
+
+  const isSentBack = (order: ConcreteRequisition) => order.approval_status === 'Sent Back';
+
+  const sentBackExpiresAt = (order: ConcreteRequisition) =>
+    order.sent_back_expires_at || (
+      order.validation_timestamp
+        ? new Date(new Date(order.validation_timestamp).getTime() + 12 * 60 * 60 * 1000).toISOString()
+        : undefined
+    );
+
+  const canEditSentBack = (order: ConcreteRequisition) => {
+    const expiresAt = sentBackExpiresAt(order);
+    return isSentBack(order) && Boolean(expiresAt) && new Date(expiresAt as string).getTime() > Date.now();
+  };
+
+  const orderStatusLabel = (order: ConcreteRequisition) => {
+    if (isSentBack(order)) return canEditSentBack(order) ? 'Sent Back' : 'Expired';
+    return order.status;
+  };
+
+  const formValuesFromOrder = (order: ConcreteRequisition): ExecutionFormData => ({
+    rfi_no: order.rfi_no || '',
+    requisition_date: order.requisition_date || today(),
+    location: order.location || '',
+    structure_type: order.structure_type || '',
+    structure_name: order.structure_name || '',
+    structure_id: order.structure_id || '',
+    pile_lift_id: order.pile_lift_id || '',
+    grade: order.grade || '',
+    drawing_no: order.drawing_no || '',
+    drawing_length: order.drawing_length,
+    drawing_diameter: order.drawing_diameter,
+    theoretical_qty: order.theoretical_qty,
+    actual_length: order.actual_length,
+    actual_diameter: order.actual_diameter,
+    actual_qty: order.actual_qty,
+    qty_difference: order.qty_difference,
+    difference_reason: order.difference_reason || '',
+    requested_qty: order.requested_qty,
+    pour_time: order.pour_time || '',
+    placement_by: order.placement_by || '',
+    in_charge_id: order.in_charge_id || currentUser?.id || '',
+    contact_person: order.contact_person || '',
+    contact_number: order.contact_number || '',
+  });
+
+  const openSentBackEdit = (order: ConcreteRequisition) => {
+    reset(formValuesFromOrder(order));
+    setActiveDraftId(null);
+    setEditingSupplyId(order.supply_id);
+    setGeneratedSupplyId(order.supply_id);
+    setIsModalOpen(true);
   };
 
   const saveDraft = () => {
@@ -307,13 +434,20 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
     setSuccessMessage('');
 
     try {
-      const response = await requisitionAPI.createRequisition(buildPayload(data));
-      setSuccessMessage(`Requisition created successfully. Supply ID: ${response.supply_id}`);
+      const response = editingSupplyId
+        ? await requisitionAPI.resubmitRequisition(editingSupplyId, buildPayload(data))
+        : await requisitionAPI.createRequisition(buildPayload(data));
+      setSuccessMessage(
+        editingSupplyId
+          ? `Requisition resubmitted under Supply ID: ${response.supply_id}`
+          : `Requisition created successfully. Supply ID: ${response.supply_id}`
+      );
       if (activeDraftId) {
         saveDrafts(drafts.filter((draft) => draft.draft_id !== activeDraftId));
       }
       reset(defaultValues(currentUser));
       setActiveDraftId(null);
+      setEditingSupplyId(null);
       setGeneratedSupplyId('');
       setIsModalOpen(false);
       await fetchOrders();
@@ -338,7 +472,7 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
     <div className="mx-auto max-w-7xl space-y-6">
       <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Execution Orders</h1>
+          <h1 className="text-[2.15rem] font-bold leading-tight text-gray-900">Execution Orders</h1>
           <p className="text-sm text-gray-600">Track submitted requisitions and resume saved drafts</p>
         </div>
         <div className="flex flex-col gap-3 xl:flex-row xl:items-end">
@@ -347,44 +481,42 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
             onChange={setFilters}
             resultCount={filteredCurrentOrders.length + filteredHistoryOrders.length}
             totalCount={orders.length}
-            className="xl:w-[760px]"
+            className="xl:w-fit"
           />
-          <button
-            type="button"
-            onClick={openNewOrder}
-            className="h-10 shrink-0 rounded-md bg-[#003F72] px-5 text-sm font-semibold text-white shadow-sm hover:bg-[#002B4E]"
-          >
-            Create New Order
-          </button>
         </div>
       </div>
 
       {successMessage && <div className="alert alert-success">{successMessage}</div>}
       {errorMessage && <div className="alert alert-danger">{errorMessage}</div>}
 
-      <div className="overflow-hidden rounded-lg bg-white shadow-md">
-        <div className="border-b border-gray-200 px-5 py-4">
-          <h2 className="text-lg font-semibold text-gray-900">Current Orders ({filteredCurrentOrders.length})</h2>
+      <div className="overflow-hidden rounded-lg bg-white shadow-md transition-shadow duration-200 ease-out hover:shadow-lg">
+        <div className="flex flex-col gap-3 bg-[#003F72] px-5 py-4 text-white sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="text-xl font-semibold">Current Orders ({filteredCurrentOrders.length})</h2>
+          <button
+            type="button"
+            onClick={openNewOrder}
+            className="h-10 shrink-0 rounded-md bg-white px-5 text-sm font-semibold text-[#003F72] shadow-sm transition-all duration-200 ease-out hover:bg-blue-50 hover:shadow"
+          >
+            Create New Order
+          </button>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1080px]">
+          <table className="w-full min-w-[920px]">
             <thead className="bg-gray-100">
               <tr>
-                <th className="px-4 py-3 text-left text-xs font-bold uppercase text-gray-600">Supply ID</th>
-                <th className="px-4 py-3 text-left text-xs font-bold uppercase text-gray-600">Date</th>
-                <th className="px-4 py-3 text-left text-xs font-bold uppercase text-gray-600">Location</th>
-                <th className="px-4 py-3 text-left text-xs font-bold uppercase text-gray-600">Structure</th>
-                <th className="px-4 py-3 text-left text-xs font-bold uppercase text-gray-600">Grade</th>
-                <th className="px-4 py-3 text-right text-xs font-bold uppercase text-gray-600">Order Qty</th>
-                <th className="px-4 py-3 text-left text-xs font-bold uppercase text-gray-600">Process Status</th>
-                <th className="px-4 py-3 text-left text-xs font-bold uppercase text-gray-600">Decision</th>
-                <th className="px-4 py-3 text-left text-xs font-bold uppercase text-gray-600">Remarks</th>
-                <th className="px-4 py-3 text-left text-xs font-bold uppercase text-gray-600">Action</th>
+                <th className={tableHeaderClass}>Supply ID</th>
+                <th className={tableHeaderClass}>Date</th>
+                <th className={tableHeaderClass}>Location</th>
+                <th className={tableHeaderClass}>Structure</th>
+                <th className={tableHeaderClass}>Grade</th>
+                <th className={numericTableHeaderClass}>Order Qty</th>
+                <th className={tableHeaderClass}>Status</th>
+                <th className={tableHeaderClass}>Action</th>
               </tr>
             </thead>
             <tbody>
               {drafts.map((draft) => (
-                <tr key={draft.draft_id} className="border-t border-gray-100 bg-amber-50/60">
+                <tr key={draft.draft_id} className="border-t border-gray-100 bg-amber-50/60 transition-colors duration-150 ease-out hover:bg-amber-100/70">
                   <td className="px-4 py-3 text-sm font-semibold text-amber-800">Draft</td>
                   <td className="px-4 py-3 text-sm">{draft.data.requisition_date || new Date(draft.updated_at).toLocaleDateString()}</td>
                   <td className="px-4 py-3 text-sm">{draft.data.location || '-'}</td>
@@ -393,22 +525,23 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
                   <td className="px-4 py-3 text-right text-sm">
                     {draft.data.requested_qty ? draft.data.requested_qty.toFixed(2) : '-'}
                   </td>
-                  <td className="px-4 py-3 text-sm">Draft</td>
-                  <td className="px-4 py-3 text-sm">-</td>
-                  <td className="px-4 py-3 text-sm">Saved {new Date(draft.updated_at).toLocaleString()}</td>
+                  <td className="px-4 py-3 text-sm">
+                    <StatusBadge status="Draft" />
+                  </td>
                   <td className="px-4 py-3">
                     <div className="flex gap-2">
                       <button
                         type="button"
                         onClick={() => resumeDraft(draft)}
-                        className="rounded bg-[#003F72] px-3 py-1 text-xs font-semibold text-white"
+                        className={tableActionButtonClass}
                       >
                         Resume
                       </button>
                       <button
                         type="button"
                         onClick={() => deleteDraft(draft.draft_id)}
-                        className="rounded bg-gray-200 px-3 py-1 text-xs font-semibold text-gray-700"
+                        className={tableActionButtonClass}
+                        title={`Saved ${new Date(draft.updated_at).toLocaleString()}`}
                       >
                         Delete
                       </button>
@@ -418,33 +551,43 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
               ))}
 
               {filteredCurrentOrders.map((order) => (
-                <tr key={order.supply_id} className="border-t border-gray-100 hover:bg-gray-50">
+                <tr key={order.supply_id} className="border-t border-gray-100 transition-colors duration-150 ease-out hover:bg-blue-50/45">
                   <td className="px-4 py-3 font-mono text-sm">{order.supply_id}</td>
                   <td className="px-4 py-3 text-sm">{formatOrderDate(order)}</td>
                   <td className="px-4 py-3 text-sm">{order.location}</td>
                   <td className="px-4 py-3 text-sm">{order.structure_name}</td>
                   <td className="px-4 py-3 text-sm">{order.grade}</td>
                   <td className="px-4 py-3 text-right text-sm">{order.requested_qty.toFixed(2)}</td>
-                  <td className="px-4 py-3 text-sm">{order.status}</td>
-                  <td className="px-4 py-3 text-sm">{order.approval_status || '-'}</td>
-                  <td className="max-w-[220px] truncate px-4 py-3 text-sm" title={order.planning_remarks || ''}>
-                    {order.planning_remarks || '-'}
+                  <td className="px-4 py-3 text-sm">
+                    <StatusBadge status={orderStatusLabel(order)} />
                   </td>
                   <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      onClick={() => setViewingOrder(order)}
-                      className="rounded bg-[#003F72]/10 px-3 py-1 text-xs font-semibold text-[#003F72]"
-                    >
-                      View
-                    </button>
+                    <div className="flex gap-2">
+                      {canEditSentBack(order) && (
+                        <button
+                          type="button"
+                          onClick={() => openSentBackEdit(order)}
+                          className={tableActionButtonClass}
+                          title={`Edit window closes at ${new Date(sentBackExpiresAt(order) as string).toLocaleString()}`}
+                        >
+                          Edit
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setViewingOrder(order)}
+                        className={tableActionButtonClass}
+                      >
+                        View
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
 
               {drafts.length === 0 && filteredCurrentOrders.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-8 text-center text-sm text-gray-500">
+                  <td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-500">
                     No orders yet.
                   </td>
                 </tr>
@@ -473,7 +616,7 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
                 Close
               </button>
             </div>
-            <RequisitionDetails requisition={viewingOrder} />
+            <RequisitionDetails requisition={viewingOrder} hidePlanningFields />
           </div>
         </div>
       )}
@@ -483,7 +626,9 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
           <div className="max-h-[92vh] w-full max-w-7xl overflow-y-auto rounded-lg bg-white shadow-xl">
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4">
               <div>
-                <h2 className="text-xl font-bold text-gray-900">Concrete Requisition Slip</h2>
+                <h2 className="text-xl font-bold text-gray-900">
+                  {editingSupplyId ? 'Revise Requisition Slip' : 'Concrete Requisition Slip'}
+                </h2>
                 <p className="min-h-6 font-mono text-sm font-semibold text-[#003F72]">{generatedSupplyId}</p>
               </div>
               <button
@@ -510,44 +655,115 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
                 </Field>
 
                 <Field label="Location" required error={errors.location?.message}>
-                  <select className={fieldClass} {...register('location', { required: 'Location is required' })}>
-                    <option value=""></option>
-                    {locationOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
+                  <Controller
+                    name="location"
+                    control={control}
+                    rules={{ required: 'Location is required' }}
+                    render={({ field }) => (
+                      <Select
+                        classNames={selectClassNames}
+                        isSearchable
+                        options={locationOptions}
+                        value={optionFor(locationOptions, field.value)}
+                        onChange={(option) => {
+                          field.onChange(option?.value || '');
+                          setValue('structure_type', '');
+                          setValue('structure_name', '');
+                          setValue('structure_id', '');
+                          setValue('pile_lift_id', '');
+                          setStructureNameOptions([]);
+                          setStructureIdOptions([]);
+                          setElementIdOptions([]);
+                        }}
+                      />
+                    )}
+                  />
                 </Field>
 
-                <Field label="Structure Type">
-                  <select className={fieldClass} {...register('structure_type')}>
-                    <option value=""></option>
-                    {structureTypeOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
+                <Field label="Structure Type" error={errors.structure_type?.message}>
+                  <Controller
+                    name="structure_type"
+                    control={control}
+                    render={({ field }) => (
+                      <Select
+                        classNames={selectClassNames}
+                        isSearchable
+                        isDisabled={!locationValue}
+                        options={structureTypeOptions}
+                        value={optionFor(structureTypeOptions, field.value)}
+                        onChange={(option) => {
+                          field.onChange(option?.value || '');
+                          setValue('structure_name', '');
+                          setValue('structure_id', '');
+                          setValue('pile_lift_id', '');
+                          setStructureIdOptions([]);
+                          setElementIdOptions([]);
+                        }}
+                      />
+                    )}
+                  />
                 </Field>
 
                 <Field label="Structure Name" required error={errors.structure_name?.message}>
-                  <select className={fieldClass} {...register('structure_name', { required: 'Structure name is required' })}>
-                    <option value=""></option>
-                    {structureNameOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
+                  <Controller
+                    name="structure_name"
+                    control={control}
+                    rules={{ required: 'Structure name is required' }}
+                    render={({ field }) => (
+                      <Select
+                        classNames={selectClassNames}
+                        isSearchable
+                        isDisabled={!locationValue || !structureTypeValue}
+                        options={structureNameOptions}
+                        value={optionFor(structureNameOptions, field.value)}
+                        onChange={(option) => {
+                          field.onChange(option?.value || '');
+                          setValue('structure_id', '');
+                          setValue('pile_lift_id', '');
+                          setElementIdOptions([]);
+                        }}
+                      />
+                    )}
+                  />
                 </Field>
 
                 <Field label="Structure ID" required error={errors.structure_id?.message}>
-                  <input className={fieldClass} {...register('structure_id', { required: 'Structure ID is required' })} />
+                  <Controller
+                    name="structure_id"
+                    control={control}
+                    rules={{ required: 'Structure ID is required' }}
+                    render={({ field }) => (
+                      <Select
+                        classNames={selectClassNames}
+                        isSearchable
+                        isDisabled={!locationValue || !structureTypeValue || !structureNameValue}
+                        options={structureIdOptions}
+                        value={optionFor(structureIdOptions, field.value)}
+                        onChange={(option) => {
+                          field.onChange(option?.value || '');
+                          setValue('pile_lift_id', '');
+                        }}
+                      />
+                    )}
+                  />
                 </Field>
 
                 <Field label="Element ID">
-                  <input className={fieldClass} {...register('pile_lift_id')} />
+                  <Controller
+                    name="pile_lift_id"
+                    control={control}
+                    render={({ field }) => (
+                      <Select
+                        classNames={selectClassNames}
+                        isClearable
+                        isSearchable
+                        isDisabled={!locationValue || !structureTypeValue || !structureNameValue || !structureIdValue || elementIdOptions.length === 0}
+                        options={elementIdOptions}
+                        value={optionFor(elementIdOptions, field.value)}
+                        onChange={(option) => field.onChange(option?.value || '')}
+                      />
+                    )}
+                  />
                 </Field>
 
                 <Field label="Concrete Grade" required error={errors.grade?.message}>
@@ -656,19 +872,21 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
               </Section>
 
               <div className="sticky bottom-0 flex justify-end gap-3 border-t border-gray-200 bg-white pt-5">
-                <button
-                  type="button"
-                  onClick={saveDraft}
-                  className="rounded-md border border-[#003F72] px-5 py-3 text-sm font-semibold text-[#003F72] hover:bg-[#003F72]/10"
-                >
-                  Save as Draft
-                </button>
+                {!editingSupplyId && (
+                  <button
+                    type="button"
+                    onClick={saveDraft}
+                    className="rounded-md border border-[#003F72] px-5 py-3 text-sm font-semibold text-[#003F72] hover:bg-[#003F72]/10"
+                  >
+                    Save as Draft
+                  </button>
+                )}
                 <button
                   type="submit"
                   disabled={submitting}
                   className="rounded-md bg-[#003F72] px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-[#002B4E] disabled:bg-gray-400"
                 >
-                  {submitting ? 'Creating...' : 'Create Requisition'}
+                  {submitting ? 'Submitting...' : editingSupplyId ? 'Resubmit Requisition' : 'Create Requisition'}
                 </button>
               </div>
             </form>

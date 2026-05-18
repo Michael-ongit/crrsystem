@@ -15,6 +15,10 @@ import {
 } from 'recharts';
 import { dashboardAPI } from '../api';
 import { DashboardSummary } from '../types';
+import StatusBadge from '../components/StatusBadge';
+
+const tableHeaderClass = 'px-4 py-2 text-left text-sm font-semibold text-[#003F72]';
+const numericTableHeaderClass = 'px-4 py-2 text-right text-sm font-semibold text-[#003F72]';
 
 /**
  * ReconciliationDashboard Component
@@ -87,7 +91,7 @@ const ReconciliationDashboard: React.FC = () => {
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold text-gray-800">
+          <h1 className="text-[2.15rem] font-bold leading-tight text-gray-800">
             Reconciliation Dashboard
           </h1>
           <p className="text-gray-600">Real-time KPI tracking & analytics</p>
@@ -112,14 +116,14 @@ const ReconciliationDashboard: React.FC = () => {
 
       {/* KPI Cards */}
       <div className="grid grid-cols-4 gap-4">
-        <div className="bg-white rounded-lg shadow p-6">
+        <div className="rounded-lg bg-white p-6 shadow transition-shadow duration-200 ease-out hover:shadow-md">
           <div className="text-gray-600 text-sm font-semibold">Total Requisitions</div>
           <div className="text-4xl font-bold text-[#003F72] mt-2">
             {dashboardData.total_requisitions}
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow p-6">
+        <div className="rounded-lg bg-white p-6 shadow transition-shadow duration-200 ease-out hover:shadow-md">
           <div className="text-gray-600 text-sm font-semibold">Avg Wastage %</div>
           <div
             className={`text-4xl font-bold mt-2 ${
@@ -133,7 +137,7 @@ const ReconciliationDashboard: React.FC = () => {
           <p className="text-xs text-gray-500 mt-2">ACE Limit: 1.0%</p>
         </div>
 
-        <div className="bg-white rounded-lg shadow p-6">
+        <div className="rounded-lg bg-white p-6 shadow transition-shadow duration-200 ease-out hover:shadow-md">
           <div className="text-gray-600 text-sm font-semibold">ACE Violations</div>
           <div
             className={`text-4xl font-bold mt-2 ${
@@ -145,7 +149,7 @@ const ReconciliationDashboard: React.FC = () => {
           <p className="text-xs text-gray-500 mt-2">Exceed 1% limit</p>
         </div>
 
-        <div className="bg-white rounded-lg shadow p-6">
+        <div className="rounded-lg bg-white p-6 shadow transition-shadow duration-200 ease-out hover:shadow-md">
           <div className="text-gray-600 text-sm font-semibold">Status Breakdown</div>
           <div className="mt-3 space-y-2 text-sm">
             {statusData.map((item) => (
@@ -161,7 +165,7 @@ const ReconciliationDashboard: React.FC = () => {
       {/* Charts */}
       <div className="grid grid-cols-2 gap-6">
         {/* Wastage Chart */}
-        <div className="bg-white rounded-lg shadow p-6">
+        <div className="rounded-lg bg-white p-6 shadow transition-shadow duration-200 ease-out hover:shadow-md">
           <h2 className="text-lg font-semibold text-gray-800 mb-4">
             Wastage Analysis (ACE Limit: 1%)
           </h2>
@@ -189,7 +193,7 @@ const ReconciliationDashboard: React.FC = () => {
         </div>
 
         {/* Turnaround Time Chart */}
-        <div className="bg-white rounded-lg shadow p-6">
+        <div className="rounded-lg bg-white p-6 shadow transition-shadow duration-200 ease-out hover:shadow-md">
           <h2 className="text-lg font-semibold text-gray-800 mb-4">
             TM Turnaround Time (Recent)
           </h2>
@@ -221,34 +225,34 @@ const ReconciliationDashboard: React.FC = () => {
 
       {/* Violations Table */}
       {dashboardData.violation_count > 0 && (
-        <div className="bg-white rounded-lg shadow p-6">
+        <div className="rounded-lg bg-white p-6 shadow transition-shadow duration-200 ease-out hover:shadow-md">
           <h2 className="text-lg font-semibold text-gray-800 mb-4">
-            ⚠️ ACE Limit Violations
+            ACE Limit Violations
           </h2>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead className="bg-red-50 border-b">
                 <tr>
-                  <th className="px-4 py-2 text-left text-sm font-semibold">Supply ID</th>
-                  <th className="px-4 py-2 text-right text-sm font-semibold">Requested</th>
-                  <th className="px-4 py-2 text-right text-sm font-semibold">Dispatched</th>
-                  <th className="px-4 py-2 text-right text-sm font-semibold">Wastage %</th>
-                  <th className="px-4 py-2 text-left text-sm font-semibold">TM Numbers</th>
+                  <th className={tableHeaderClass}>Supply ID</th>
+                  <th className={numericTableHeaderClass}>Requested</th>
+                  <th className={numericTableHeaderClass}>Dispatched</th>
+                  <th className={numericTableHeaderClass}>Wastage %</th>
+                  <th className={tableHeaderClass}>TM Numbers</th>
                 </tr>
               </thead>
               <tbody>
                 {dashboardData.wastage_records
                   .filter((r) => r.exceeds_ace_limit)
                   .map((record) => (
-                    <tr key={record.supply_id} className="border-b hover:bg-red-50">
+                    <tr key={record.supply_id} className="border-b transition-colors duration-150 ease-out hover:bg-red-50">
                       <td className="px-4 py-3 font-mono text-sm">
                         {record.supply_id}
                       </td>
                       <td className="px-4 py-3 text-sm text-right">
-                        {record.requested_qty.toFixed(2)} m³
+                        {record.requested_qty.toFixed(2)} m3
                       </td>
                       <td className="px-4 py-3 text-sm text-right">
-                        {record.actual_dispatched_qty.toFixed(2)} m³
+                        {record.actual_dispatched_qty.toFixed(2)} m3
                       </td>
                       <td className="px-4 py-3 text-sm text-right font-semibold text-red-600">
                         {record.wastage_percentage.toFixed(2)}%
@@ -265,7 +269,7 @@ const ReconciliationDashboard: React.FC = () => {
       )}
 
       {/* All Requisitions Table */}
-      <div className="bg-white rounded-lg shadow p-6">
+      <div className="rounded-lg bg-white p-6 shadow transition-shadow duration-200 ease-out hover:shadow-md">
         <h2 className="text-lg font-semibold text-gray-800 mb-4">
           All Requisitions ({dashboardData.wastage_records.length})
         </h2>
@@ -273,12 +277,12 @@ const ReconciliationDashboard: React.FC = () => {
           <table className="w-full">
             <thead className="bg-gray-100 border-b">
               <tr>
-                <th className="px-4 py-2 text-left text-sm font-semibold">Supply ID</th>
-                <th className="px-4 py-2 text-right text-sm font-semibold">Requested</th>
-                <th className="px-4 py-2 text-right text-sm font-semibold">Dispatched</th>
-                <th className="px-4 py-2 text-right text-sm font-semibold">Wastage</th>
-                <th className="px-4 py-2 text-right text-sm font-semibold">Wastage %</th>
-                <th className="px-4 py-2 text-left text-sm font-semibold">Status</th>
+                <th className={tableHeaderClass}>Supply ID</th>
+                <th className={numericTableHeaderClass}>Requested</th>
+                <th className={numericTableHeaderClass}>Dispatched</th>
+                <th className={numericTableHeaderClass}>Wastage</th>
+                <th className={numericTableHeaderClass}>Wastage %</th>
+                <th className={tableHeaderClass}>Status</th>
               </tr>
             </thead>
             <tbody>
@@ -286,18 +290,18 @@ const ReconciliationDashboard: React.FC = () => {
                 <tr
                   key={record.supply_id}
                   className={`border-b ${
-                    record.exceeds_ace_limit ? 'bg-red-50' : 'hover:bg-gray-50'
+                    record.exceeds_ace_limit ? 'bg-red-50' : 'hover:bg-blue-50/45'
                   }`}
                 >
                   <td className="px-4 py-3 font-mono text-sm">{record.supply_id}</td>
                   <td className="px-4 py-3 text-sm text-right">
-                    {record.requested_qty.toFixed(2)} m³
+                    {record.requested_qty.toFixed(2)} m3
                   </td>
                   <td className="px-4 py-3 text-sm text-right">
-                    {record.actual_dispatched_qty.toFixed(2)} m³
+                    {record.actual_dispatched_qty.toFixed(2)} m3
                   </td>
                   <td className="px-4 py-3 text-sm text-right">
-                    {record.wastage_qty.toFixed(2)} m³
+                    {record.wastage_qty.toFixed(2)} m3
                   </td>
                   <td
                     className={`px-4 py-3 text-sm text-right font-semibold ${
@@ -309,15 +313,7 @@ const ReconciliationDashboard: React.FC = () => {
                     {record.wastage_percentage.toFixed(2)}%
                   </td>
                   <td className="px-4 py-3 text-sm">
-                    <span
-                      className={`px-2 py-1 rounded text-xs font-semibold ${
-                        record.exceeds_ace_limit
-                          ? 'bg-red-100 text-red-700'
-                          : 'bg-green-100 text-green-700'
-                      }`}
-                    >
-                      {record.exceeds_ace_limit ? 'VIOLATION' : 'OK'}
-                    </span>
+                    <StatusBadge status={record.exceeds_ace_limit ? 'VIOLATION' : 'OK'} />
                   </td>
                 </tr>
               ))}

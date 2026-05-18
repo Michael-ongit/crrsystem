@@ -59,7 +59,7 @@ const Layout: React.FC<LayoutProps> = ({
   return (
     <div className="flex h-screen bg-gray-100">
       <aside
-        className={`relative flex flex-col bg-[#003F72] text-white shadow-lg transition-all duration-300 ${
+        className={`relative flex flex-col bg-[#003F72] text-white shadow-lg transition-all duration-300 ease-out ${
           isCollapsed ? 'w-20' : 'w-64'
         }`}
       >
@@ -72,11 +72,15 @@ const Layout: React.FC<LayoutProps> = ({
           <button
             type="button"
             onClick={() => setIsCollapsed((value) => !value)}
-            className="ml-auto h-10 w-10 rounded-md border border-white/20 bg-white/10 text-lg font-semibold text-white hover:bg-white/20"
+            className="group ml-auto flex h-10 w-10 items-center justify-center rounded-md border border-white/20 bg-white/10 text-white transition-all duration-200 ease-out hover:bg-white/20 hover:shadow-sm"
             aria-label={isCollapsed ? 'Expand side panel' : 'Collapse side panel'}
             title={isCollapsed ? 'Expand side panel' : 'Collapse side panel'}
           >
-            {isCollapsed ? '>' : '<'}
+            <span className="flex h-4 w-5 flex-col justify-between" aria-hidden="true">
+              <span className="h-0.5 rounded-full bg-current transition-transform duration-200 ease-out group-hover:translate-x-0.5" />
+              <span className="h-0.5 rounded-full bg-current transition-opacity duration-200 ease-out group-hover:opacity-80" />
+              <span className="h-0.5 rounded-full bg-current transition-transform duration-200 ease-out group-hover:-translate-x-0.5" />
+            </span>
           </button>
         </div>
 
@@ -94,7 +98,7 @@ const Layout: React.FC<LayoutProps> = ({
               key={item.path}
               to={item.path}
               title={isCollapsed ? item.label : undefined}
-              className={`flex items-center rounded-lg transition ${
+              className={`flex items-center rounded-lg transition-all duration-200 ease-out ${
                 isCollapsed ? 'justify-center px-2 py-3' : 'px-4 py-2'
               } ${
                 location.pathname === item.path
@@ -130,7 +134,7 @@ const Layout: React.FC<LayoutProps> = ({
       </aside>
 
       <main className="flex-1 overflow-auto">
-        <div className="p-6 lg:p-8">{children}</div>
+        <div className="px-6 pb-6 pt-4 lg:px-8 lg:pb-8 lg:pt-5">{children}</div>
       </main>
     </div>
   );

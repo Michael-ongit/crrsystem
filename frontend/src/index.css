@@ -52,7 +52,7 @@ body {
 /* Button styles */
 button {
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition: all 0.2s ease-out;
 }
 
 button:disabled {
@@ -64,7 +64,7 @@ button:disabled {
 input,
 select,
 textarea {
-  transition: all 0.3s ease;
+  transition: all 0.18s ease-out;
 }
 
 input:focus,

@@ -1,4 +1,6 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import Select from 'react-select';
+import { hierarchyAPI } from '../api';
 import { ConcreteRequisition } from '../types';
 
 export type DateRangeFilter = 'all' | '7' | '30' | '90' | '365' | 'custom';
@@ -56,6 +58,20 @@ const getOrderDate = (requisition: Pick<ConcreteRequisition, 'req_date' | 'requi
 };
 
 type ConcreteSearchField = Exclude<RequisitionSearchField, 'all'>;
+type HierarchyFilterField = 'location' | 'structure_type' | 'structure_name' | 'structure_id' | 'pile_lift_id';
+type SelectOption = { value: string; label: string };
+const MULTI_VALUE_SEPARATOR = '|||';
+const categoricalFields: HierarchyFilterField[] = [
+  'location',
+  'structure_type',
+  'structure_name',
+  'structure_id',
+  'pile_lift_id',
+];
+const toOptions = (values: string[]): SelectOption[] =>
+  Array.from(new Set(values.filter(Boolean)))
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    .map((value) => ({ value, label: value }));
 
 const fieldValue = (requisition: ConcreteRequisition, field: ConcreteSearchField) => {
   const values: Record<Exclude<RequisitionSearchField, 'all'>, unknown> = {
@@ -80,6 +96,10 @@ export const filterRequisitions = (
   filters: RequisitionFilterState
 ) => {
   const searchTerm = filters.searchTerm.trim().toLowerCase();
+  const searchTerms = filters.searchTerm
+    .split(MULTI_VALUE_SEPARATOR)
+    .map((term) => term.trim().toLowerCase())
+    .filter(Boolean);
   const cutoff = filters.dateRange === 'all' || filters.dateRange === 'custom'
     ? null
     : new Date(Date.now() - Number(filters.dateRange) * 24 * 60 * 60 * 1000);
@@ -113,12 +133,43 @@ export const filterRequisitions = (
         'approval_status',
         'planning_remarks',
         'contact_person',
-      ] as ConcreteSearchField[]).some((field) => fieldValue(requisition, field).includes(searchTerm));
+      ] as ConcreteSearchField[]).some((field) =>
+        searchTerms.some((term) => fieldValue(requisition, field).includes(term))
+      );
     }
 
-    return fieldValue(requisition, filters.searchField).includes(searchTerm);
+    const value = fieldValue(requisition, filters.searchField);
+    if (isHierarchyFilterField(filters.searchField)) {
+      return searchTerms.some((term) => value === term);
+    }
+    return searchTerms.some((term) => value.includes(term));
   });
 };
+
+const selectClassNames = {
+  control: (state: any) =>
+    `min-h-[38px] rounded-md border bg-white text-sm shadow-sm ${
+      state.isFocused ? 'border-[#003F72] ring-2 ring-[#003F72]/15' : 'border-gray-300'
+    }`,
+  valueContainer: () => 'px-2',
+  input: () => 'text-sm text-gray-900',
+  placeholder: () => 'text-sm text-gray-400',
+  multiValue: () => 'rounded bg-[#003F72]/10',
+  multiValueLabel: () => 'text-xs text-[#003F72]',
+  menu: () => 'z-50 rounded-md border border-gray-200 bg-white text-sm shadow-lg',
+  option: (state: any) =>
+    `cursor-pointer px-3 py-2 ${
+      state.isSelected ? 'bg-[#003F72] text-white' : state.isFocused ? 'bg-[#003F72]/10 text-gray-900' : 'text-gray-900'
+    }`,
+};
+
+const isHierarchyFilterField = (field: RequisitionSearchField): field is HierarchyFilterField =>
+  categoricalFields.includes(field as HierarchyFilterField);
+
+async function loadCategoricalOptions(field: RequisitionSearchField): Promise<string[]> {
+  if (!isHierarchyFilterField(field)) return [];
+  return hierarchyAPI.getFilterOptions(field);
+}
 
 const RequisitionFilters: React.FC<RequisitionFiltersProps> = ({
   filters,
@@ -126,9 +177,43 @@ const RequisitionFilters: React.FC<RequisitionFiltersProps> = ({
   resultCount,
   totalCount,
   className = '',
-}) => (
-  <div className={`rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm ${className}`}>
-    <div className="grid grid-cols-1 gap-3 xl:grid-cols-[160px_180px_220px_auto] xl:items-end">
+}) => {
+  const [categoricalOptions, setCategoricalOptions] = useState<SelectOption[]>([]);
+  const [loadingOptions, setLoadingOptions] = useState(false);
+  const isCategorical = isHierarchyFilterField(filters.searchField);
+  const selectedOptions = useMemo(() => {
+    const selectedValues = filters.searchTerm.split(MULTI_VALUE_SEPARATOR).filter(Boolean);
+    return selectedValues.map((value) => ({ value, label: value }));
+  }, [filters.searchTerm]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!isCategorical) {
+      setCategoricalOptions([]);
+      return;
+    }
+
+    setLoadingOptions(true);
+    loadCategoricalOptions(filters.searchField)
+      .then((values) => {
+        if (!cancelled) setCategoricalOptions(toOptions(values));
+      })
+      .catch((error) => {
+        console.error('Failed to load filter options:', error);
+        if (!cancelled) setCategoricalOptions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingOptions(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [filters.searchField, isCategorical]);
+
+  return (
+  <div className={`w-full rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm transition-shadow duration-200 ease-out hover:shadow-md xl:w-fit ${className}`}>
+    <div className="grid grid-cols-1 gap-3 xl:grid-cols-[150px_170px_220px_max-content] xl:items-end">
       <label className="block">
         <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">Date Range</span>
         <select
@@ -149,7 +234,7 @@ const RequisitionFilters: React.FC<RequisitionFiltersProps> = ({
         <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">Search By</span>
         <select
           value={filters.searchField}
-          onChange={(event) => onChange({ ...filters, searchField: event.target.value as RequisitionSearchField })}
+          onChange={(event) => onChange({ ...filters, searchField: event.target.value as RequisitionSearchField, searchTerm: '' })}
           className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-[#003F72] focus:ring-2 focus:ring-[#003F72]/15"
         >
           <option value="all">Any datapoint</option>
@@ -170,15 +255,32 @@ const RequisitionFilters: React.FC<RequisitionFiltersProps> = ({
 
       <label className="block">
         <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">Search</span>
-        <input
-          value={filters.searchTerm}
-          onChange={(event) => onChange({ ...filters, searchTerm: event.target.value })}
-          placeholder=""
-          className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-[#003F72] focus:ring-2 focus:ring-[#003F72]/15"
-        />
+        {isCategorical ? (
+          <Select
+            classNames={selectClassNames}
+            isMulti
+            isSearchable
+            isLoading={loadingOptions}
+            options={categoricalOptions}
+            value={selectedOptions}
+            onChange={(options) =>
+              onChange({
+                ...filters,
+                searchTerm: options.map((option) => option.value).join(MULTI_VALUE_SEPARATOR),
+              })
+            }
+          />
+        ) : (
+          <input
+            value={filters.searchTerm}
+            onChange={(event) => onChange({ ...filters, searchTerm: event.target.value })}
+            placeholder=""
+            className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-[#003F72] focus:ring-2 focus:ring-[#003F72]/15"
+          />
+        )}
       </label>
 
-      <div className="text-sm font-semibold text-gray-600">
+      <div className="whitespace-nowrap pb-2 text-sm font-semibold text-gray-600">
         {resultCount} of {totalCount}
       </div>
     </div>
@@ -208,5 +310,6 @@ const RequisitionFilters: React.FC<RequisitionFiltersProps> = ({
     )}
   </div>
 );
+};
 
 export default RequisitionFilters;

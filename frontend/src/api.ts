@@ -101,6 +101,9 @@ export const requisitionAPI = {
   createRequisition: (data: ConcreteRequisitionCreate): Promise<ConcreteRequisition> =>
     apiClient.post('/requisitions', data).then((res) => res.data),
 
+  resubmitRequisition: (supplyId: string, data: ConcreteRequisitionCreate): Promise<ConcreteRequisition> =>
+    apiClient.put(`/requisitions/${supplyId}/resubmit`, data).then((res) => res.data),
+
   previewSupplyId: (data: {
     location: string;
     structure_name: string;
@@ -127,6 +130,62 @@ export const requisitionAPI = {
       .put(`/requisitions/${supplyId}/validate`, validation)
       .then((res) => res.data),
 
+};
+
+// ============== HIERARCHY LOOKUP ENDPOINTS ==============
+
+export const hierarchyAPI = {
+  getLocations: (): Promise<string[]> =>
+    apiClient.get('/requisitions/meta/locations').then((res) => res.data),
+
+  getStructureTypes: (location: string): Promise<string[]> =>
+    apiClient
+      .get('/requisitions/meta/structure-types', { params: { location } })
+      .then((res) => res.data),
+
+  getStructureNames: (location: string, structureType: string): Promise<string[]> =>
+    apiClient
+      .get('/requisitions/meta/structure-names', {
+        params: { location, structure_type: structureType },
+      })
+      .then((res) => res.data),
+
+  getStructureIds: (
+    location: string,
+    structureType: string,
+    structureName: string
+  ): Promise<string[]> =>
+    apiClient
+      .get('/requisitions/meta/structure-ids', {
+        params: {
+          location,
+          structure_type: structureType,
+          structure_name: structureName,
+        },
+      })
+      .then((res) => res.data),
+
+  getElementIds: (
+    location: string,
+    structureType: string,
+    structureName: string,
+    structureId: string
+  ): Promise<string[]> =>
+    apiClient
+      .get('/requisitions/meta/element-ids', {
+        params: {
+          location,
+          structure_type: structureType,
+          structure_name: structureName,
+          structure_id: structureId,
+        },
+      })
+      .then((res) => res.data),
+
+  getFilterOptions: (field: 'location' | 'structure_type' | 'structure_name' | 'structure_id' | 'pile_lift_id'): Promise<string[]> =>
+    apiClient
+      .get('/requisitions/meta/filter-options', { params: { field } })
+      .then((res) => res.data),
 };
 
 // ============== PRODUCTION/DISPATCH ENDPOINTS ==============

@@ -137,6 +137,7 @@ class ConcreteRequisitionResponse(BaseModel):
     approval_status: Optional[str] = None
     planning_remarks: Optional[str] = None
     validation_timestamp: Optional[datetime] = None
+    sent_back_expires_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
     
@@ -151,14 +152,14 @@ class PlanningValidationCreate(BaseModel):
     supply_id: Optional[str] = Field(None, description="Supply ID to validate")
     validated_by: str = Field(..., description="UUID of the validator")
     planning_remarks: Optional[str] = Field(None, max_length=2000)
-    is_approved: str = Field(..., description="Approved, Rejected, or Pending")
+    is_approved: str = Field(..., description="Approved, Sent Back, or Pending")
     
     @field_validator('is_approved')
     @classmethod
     def validate_approval_status(cls, v: str) -> str:
         """Ensure approval status is valid"""
-        if v not in ["Approved", "Rejected", "Pending"]:
-            raise ValueError('Approval status must be Approved, Rejected, or Pending')
+        if v not in ["Approved", "Sent Back", "Pending"]:
+            raise ValueError('Approval status must be Approved, Sent Back, or Pending')
         return v
 
 
