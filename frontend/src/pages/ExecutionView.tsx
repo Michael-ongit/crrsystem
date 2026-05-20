@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import Select from 'react-select';
 import { hierarchyAPI, requisitionAPI, userAPI } from '../api';
+import PastRequisitionsModalButton from '../components/PastRequisitionsModalButton';
 import PastRequisitionsTable from '../components/PastRequisitionsTable';
 import RequisitionFilters, {
   defaultRequisitionFilters,
@@ -198,7 +199,13 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
     [orders]
   );
   const historyOrders = useMemo(
-    () => orders.filter((order) => order.status !== RequisitionStatus.PENDING),
+    () => orders.filter((order) =>
+      [RequisitionStatus.VALIDATED, RequisitionStatus.DISPATCHED, RequisitionStatus.RETURNING].includes(order.status)
+    ),
+    [orders]
+  );
+  const pastOrders = useMemo(
+    () => orders.filter((order) => order.status === RequisitionStatus.RECONCILED),
     [orders]
   );
   const filteredCurrentOrders = useMemo(
@@ -480,7 +487,7 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
             filters={filters}
             onChange={setFilters}
             resultCount={filteredCurrentOrders.length + filteredHistoryOrders.length}
-            totalCount={orders.length}
+            totalCount={currentOrders.length + historyOrders.length}
             className="xl:w-fit"
           />
         </div>
@@ -599,9 +606,11 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
 
       <PastRequisitionsTable
         requisitions={filteredHistoryOrders}
-        emptyText="No past requisitions found."
+        emptyText="No ongoing requisitions found."
         onView={setViewingOrder}
       />
+
+      <PastRequisitionsModalButton requisitions={pastOrders} />
 
       {viewingOrder && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4">

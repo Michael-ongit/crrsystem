@@ -26,6 +26,7 @@ class RequisitionStatus(str, PyEnum):
     PENDING = "Pending"
     VALIDATED = "Validated"
     DISPATCHED = "Dispatched"
+    RETURNING = "Returning"
     RECONCILED = "Reconciled"
 
 

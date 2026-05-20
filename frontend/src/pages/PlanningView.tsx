@@ -1,6 +1,7 @@
 // pages/PlanningView.tsx - Planning team validation interface
 import React, { useEffect, useMemo, useState } from 'react';
 import { requisitionAPI } from '../api';
+import PastRequisitionsModalButton from '../components/PastRequisitionsModalButton';
 import PastRequisitionsTable from '../components/PastRequisitionsTable';
 import RequisitionFilters, {
   defaultRequisitionFilters,
@@ -33,6 +34,7 @@ const tableActionButtonClass =
 const PlanningView: React.FC<PlanningViewProps> = ({ currentUser }) => {
   const [requisitions, setRequisitions] = useState<ConcreteRequisition[]>([]);
   const [history, setHistory] = useState<ConcreteRequisition[]>([]);
+  const [pastRequisitions, setPastRequisitions] = useState<ConcreteRequisition[]>([]);
   const [filters, setFilters] = useState<RequisitionFilterState>(defaultRequisitionFilters);
   const [selectedRequisition, setSelectedRequisition] = useState<ConcreteRequisition | null>(null);
   const [viewingOrder, setViewingOrder] = useState<ConcreteRequisition | null>(null);
@@ -51,9 +53,10 @@ const PlanningView: React.FC<PlanningViewProps> = ({ currentUser }) => {
       setRequisitions(pendingReqs.filter((req) => req.approval_status !== 'Sent Back'));
       setHistory(
         allReqs.filter((req) =>
-          [RequisitionStatus.VALIDATED, RequisitionStatus.DISPATCHED, RequisitionStatus.RECONCILED].includes(req.status)
+          [RequisitionStatus.VALIDATED, RequisitionStatus.DISPATCHED, RequisitionStatus.RETURNING].includes(req.status)
         )
       );
+      setPastRequisitions(allReqs.filter((req) => req.status === RequisitionStatus.RECONCILED));
     } catch (error) {
       console.error('Failed to fetch requisitions:', error);
       setMessage({
@@ -200,6 +203,8 @@ const PlanningView: React.FC<PlanningViewProps> = ({ currentUser }) => {
       </div>
 
       <PastRequisitionsTable requisitions={filteredHistory} onView={setViewingOrder} />
+
+      <PastRequisitionsModalButton requisitions={pastRequisitions} />
 
       {viewingOrder && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4">

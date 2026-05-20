@@ -81,7 +81,7 @@ const ReconciliationDashboard: React.FC = () => {
   // Status distribution data
   const statusData = [
     { name: 'Pending', value: dashboardData.pending_count },
-    { name: 'Validated', value: dashboardData.validated_count },
+    { name: 'Approved', value: dashboardData.validated_count },
     { name: 'Dispatched', value: dashboardData.dispatched_count },
     { name: 'Reconciled', value: dashboardData.reconciled_count },
   ];

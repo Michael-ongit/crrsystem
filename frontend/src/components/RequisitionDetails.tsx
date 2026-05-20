@@ -9,6 +9,7 @@ interface RequisitionDetailsProps {
 
 const display = (value: unknown) => {
   if (value === undefined || value === null || value === '') return '-';
+  if (value === 'Validated') return 'Approved';
   if (typeof value === 'number') return Number.isFinite(value) ? value.toFixed(2) : '-';
   return String(value);
 };

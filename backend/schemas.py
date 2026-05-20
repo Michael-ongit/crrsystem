@@ -18,6 +18,7 @@ class RequisitionStatus(str, Enum):
     PENDING = "Pending"
     VALIDATED = "Validated"
     DISPATCHED = "Dispatched"
+    RETURNING = "Returning"
     RECONCILED = "Reconciled"
 
 
@@ -279,6 +280,19 @@ class DispatchReconciliationUpdate(BaseModel):
     """Schema for acknowledging receipt and reconciling a dispatched order"""
     receipt_at_site_time: datetime
     release_from_site_time: datetime
+    return_to_plant_time: datetime
+    remarks: Optional[str] = Field(None, max_length=2000)
+
+
+class DispatchAcknowledgementUpdate(BaseModel):
+    """Schema for acknowledging site receipt and release before plant return"""
+    receipt_at_site_time: datetime
+    release_from_site_time: datetime
+    remarks: Optional[str] = Field(None, max_length=2000)
+
+
+class ReturnToPlantUpdate(BaseModel):
+    """Schema for closing a dispatched order after the mixer returns to plant"""
     return_to_plant_time: datetime
     remarks: Optional[str] = Field(None, max_length=2000)
 

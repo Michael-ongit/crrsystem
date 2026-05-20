@@ -53,7 +53,7 @@ def get_dashboard_summary(
             ConcreteRequisition.status == RequisitionStatus.VALIDATED
         ).scalar() or 0
         dispatched_count = db.query(func.count(ConcreteRequisition.supply_id)).filter(
-            ConcreteRequisition.status == RequisitionStatus.DISPATCHED
+            ConcreteRequisition.status.in_([RequisitionStatus.DISPATCHED, RequisitionStatus.RETURNING])
         ).scalar() or 0
         reconciled_count = db.query(func.count(ConcreteRequisition.supply_id)).filter(
             ConcreteRequisition.status == RequisitionStatus.RECONCILED

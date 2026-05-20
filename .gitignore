@@ -1,6 +1,10 @@
 # Backend
+venv/
 backend/venv/
+__pycache__/
 backend/__pycache__/
+**/__pycache__/
+*.py[cod]
 backend/*.pyc
 backend/*.pyo
 backend/.env
@@ -35,6 +39,7 @@ frontend/.DS_Store
 .DS_Store
 Thumbs.db
 desktop.ini
+~$*.xlsx
 
 # Database
 *.db

@@ -224,6 +224,23 @@ export const productionAPI = {
     apiClient
       .put(`/production/dispatch/${dispatchId}/reconcile`, data)
       .then((res) => res.data),
+
+  acknowledgeDispatch: (dispatchId: string, data: {
+    receipt_at_site_time: string;
+    release_from_site_time: string;
+    remarks?: string;
+  }): Promise<ProductionDispatch> =>
+    apiClient
+      .put(`/production/dispatch/${dispatchId}/acknowledge`, data)
+      .then((res) => res.data),
+
+  updateReturnToPlant: (dispatchId: string, data: {
+    return_to_plant_time: string;
+    remarks?: string;
+  }): Promise<ProductionDispatch> =>
+    apiClient
+      .put(`/production/dispatch/${dispatchId}/return-to-plant`, data)
+      .then((res) => res.data),
 };
 
 // ============== DASHBOARD ENDPOINTS ==============

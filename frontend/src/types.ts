@@ -11,6 +11,7 @@ export enum RequisitionStatus {
   PENDING = 'Pending',
   VALIDATED = 'Validated',
   DISPATCHED = 'Dispatched',
+  RETURNING = 'Returning',
   RECONCILED = 'Reconciled',
 }
 

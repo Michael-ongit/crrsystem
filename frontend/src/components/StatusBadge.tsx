@@ -19,12 +19,16 @@ const statusTones: Record<string, StatusTone> = {
     className: 'bg-amber-100 text-amber-800 ring-amber-200',
   },
   Validated: {
-    label: 'Validated',
-    className: 'bg-blue-100 text-blue-800 ring-blue-200',
+    label: 'Approved',
+    className: 'bg-cyan-100 text-cyan-800 ring-cyan-200',
   },
   Dispatched: {
     label: 'Dispatched',
-    className: 'bg-indigo-100 text-indigo-800 ring-indigo-200',
+    className: 'bg-fuchsia-100 text-fuchsia-800 ring-fuchsia-200',
+  },
+  Returning: {
+    label: 'Returning',
+    className: 'bg-violet-100 text-violet-800 ring-violet-200',
   },
   Reconciled: {
     label: 'Reconciled',

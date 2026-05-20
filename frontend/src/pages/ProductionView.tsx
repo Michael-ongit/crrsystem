@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { productionAPI, requisitionAPI, userAPI } from '../api';
+import PastRequisitionsModalButton from '../components/PastRequisitionsModalButton';
 import PastRequisitionsTable from '../components/PastRequisitionsTable';
 import RequisitionFilters, {
   defaultRequisitionFilters,
@@ -10,7 +11,7 @@ import RequisitionFilters, {
   RequisitionFilterState,
 } from '../components/RequisitionFilters';
 import RequisitionDetails from '../components/RequisitionDetails';
-import { ConcreteRequisition, RequisitionStatus } from '../types';
+import { ConcreteRequisition, ProductionDispatch, RequisitionStatus } from '../types';
 
 interface DispatchFormData {
   batching_plant_id: string;
@@ -18,6 +19,27 @@ interface DispatchFormData {
   actual_dispatched_qty?: number;
   dispatch_time: string;
   receipt_location: string;
+}
+
+interface StagedDispatchVehicle {
+  vehicle_id: string;
+  batching_plant_id: string;
+  tm_number: string;
+  actual_dispatched_qty: number;
+  dispatch_time: string;
+  receipt_location: string;
+}
+
+interface ReturnToPlantFormData {
+  return_to_plant_date: string;
+  return_to_plant_time: string;
+  remarks: string;
+}
+
+interface ReturnToPlantOrder {
+  supply_id: string;
+  dispatches: ProductionDispatch[];
+  requisition: ConcreteRequisition;
 }
 
 const getErrorMessage = (error: any, fallback: string) => {
@@ -37,6 +59,10 @@ const numericTableHeaderClass = 'px-4 py-3 text-right text-xs font-bold uppercas
 const tableActionButtonClass =
   'rounded bg-[#003F72] px-3 py-1 text-sm font-semibold text-white shadow-sm transition-all duration-200 ease-out hover:bg-[#002B4E] hover:shadow';
 
+const today = () => new Date().toISOString().slice(0, 10);
+
+const combineDateTime = (date: string, time: string) => new Date(`${date}T${time}`).toISOString();
+
 const display = (value: unknown) => {
   if (value === undefined || value === null || value === '') return '-';
   if (typeof value === 'number') return Number.isFinite(value) ? value.toFixed(2) : '-';
@@ -46,13 +72,23 @@ const display = (value: unknown) => {
 const ProductionView: React.FC = () => {
   const [requisitions, setRequisitions] = useState<ConcreteRequisition[]>([]);
   const [history, setHistory] = useState<ConcreteRequisition[]>([]);
+  const [returnOrders, setReturnOrders] = useState<ReturnToPlantOrder[]>([]);
+  const [pastRequisitions, setPastRequisitions] = useState<ConcreteRequisition[]>([]);
+  const [dispatchTotals, setDispatchTotals] = useState<Record<string, number>>({});
   const [filters, setFilters] = useState<RequisitionFilterState>(defaultRequisitionFilters);
   const [selectedRequisition, setSelectedRequisition] = useState<ConcreteRequisition | null>(null);
+  const [dispatchVehicles, setDispatchVehicles] = useState<StagedDispatchVehicle[]>([]);
+  const [selectedDispatchVehicleId, setSelectedDispatchVehicleId] = useState<string | null>(null);
+  const [selectedReturnOrder, setSelectedReturnOrder] = useState<ReturnToPlantOrder | null>(null);
+  const [selectedReturnDispatchId, setSelectedReturnDispatchId] = useState<string | null>(null);
   const [viewingOrder, setViewingOrder] = useState<ConcreteRequisition | null>(null);
   const [userNames, setUserNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [dispatching, setDispatching] = useState(false);
+  const [finalizingDispatch, setFinalizingDispatch] = useState(false);
+  const [returning, setReturning] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [dispatchMessage, setDispatchMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const {
     register,
@@ -67,20 +103,71 @@ const ProductionView: React.FC = () => {
     },
   });
 
+  const {
+    register: registerReturn,
+    handleSubmit: handleReturnSubmit,
+    formState: { errors: returnErrors },
+    reset: resetReturn,
+  } = useForm<ReturnToPlantFormData>({
+    defaultValues: {
+      return_to_plant_date: today(),
+      return_to_plant_time: '',
+      remarks: '',
+    },
+  });
+
   const fetchValidatedRequisitions = async () => {
     try {
       setLoading(true);
-      const [validatedReqs, allReqs, users] = await Promise.all([
+      const [validatedReqs, allReqs, users, dispatches] = await Promise.all([
         requisitionAPI.getRequisitions(RequisitionStatus.VALIDATED),
         requisitionAPI.getRequisitions(),
         userAPI.getUsers(),
+        productionAPI.getAllDispatches(0, 200),
       ]);
+      const requisitionsBySupplyId = new Map(allReqs.map((req) => [req.supply_id, req]));
+      const totals = dispatches.reduce<Record<string, number>>((acc, dispatch) => {
+        acc[dispatch.supply_id] = (acc[dispatch.supply_id] || 0) + dispatch.actual_dispatched_qty;
+        return acc;
+      }, {});
+      const returnReadyDispatches = dispatches.filter((dispatch) =>
+        dispatch.receipt_at_site_time &&
+        dispatch.release_from_site_time &&
+        !dispatch.return_to_plant_time
+      );
+      const returnReadyOrders = Array.from(
+        returnReadyDispatches.reduce((groups, dispatch) => {
+          const requisition = requisitionsBySupplyId.get(dispatch.supply_id);
+          if (!requisition) return groups;
+          const existing = groups.get(dispatch.supply_id);
+          if (existing) {
+            existing.dispatches.push(dispatch);
+          } else {
+            groups.set(dispatch.supply_id, {
+              supply_id: dispatch.supply_id,
+              requisition,
+              dispatches: [dispatch],
+            });
+          }
+          return groups;
+        }, new Map<string, ReturnToPlantOrder>()).values()
+      ).map((order) => ({
+        ...order,
+        dispatches: order.dispatches.sort(
+          (a, b) => new Date(a.dispatch_time).getTime() - new Date(b.dispatch_time).getTime()
+        ),
+      }));
+      const returnReadySupplyIds = new Set(returnReadyOrders.map((order) => order.supply_id));
       setRequisitions(validatedReqs);
       setHistory(
         allReqs.filter((req) =>
-          [RequisitionStatus.VALIDATED, RequisitionStatus.DISPATCHED, RequisitionStatus.RECONCILED].includes(req.status)
+          [RequisitionStatus.DISPATCHED, RequisitionStatus.RETURNING].includes(req.status) &&
+          !returnReadySupplyIds.has(req.supply_id)
         )
       );
+      setReturnOrders(returnReadyOrders);
+      setPastRequisitions(allReqs.filter((req) => req.status === RequisitionStatus.RECONCILED));
+      setDispatchTotals(totals);
       setUserNames(Object.fromEntries(users.map((user) => [user.id, user.name])));
     } catch (error) {
       console.error('Failed to fetch requisitions:', error);
@@ -102,16 +189,104 @@ const ProductionView: React.FC = () => {
     [filters, requisitions]
   );
   const filteredHistory = useMemo(() => filterRequisitions(history, filters), [filters, history]);
+  const filteredReturnOrders = useMemo(() => {
+    const returnRequisitions = returnOrders.map((order) => order.requisition);
+    const allowedSupplyIds = new Set(filterRequisitions(returnRequisitions, filters).map((req) => req.supply_id));
+    return returnOrders.filter((order) => allowedSupplyIds.has(order.requisition.supply_id));
+  }, [filters, returnOrders]);
+
+  const dispatchSummary = useMemo(() => {
+    const totalQty = selectedRequisition?.requested_qty || 0;
+    const existingDispatchedQty = selectedRequisition
+      ? dispatchTotals[selectedRequisition.supply_id] || 0
+      : 0;
+    const stagedDispatchedQty = dispatchVehicles.reduce(
+      (total, vehicle) => total + vehicle.actual_dispatched_qty,
+      0
+    );
+    const dispatchedQty = existingDispatchedQty + stagedDispatchedQty;
+    return {
+      totalQty,
+      existingDispatchedQty,
+      stagedDispatchedQty,
+      dispatchedQty,
+      remainingQty: Math.max(0, totalQty - dispatchedQty),
+    };
+  }, [dispatchTotals, dispatchVehicles, selectedRequisition]);
+
+  const selectedReturnDispatch = useMemo(() => {
+    if (!selectedReturnOrder) return null;
+    return selectedReturnOrder.dispatches.find((dispatch) => dispatch.dispatch_id === selectedReturnDispatchId)
+      || selectedReturnOrder.dispatches[0]
+      || null;
+  }, [selectedReturnDispatchId, selectedReturnOrder]);
+
+  const selectedReturnDetails = useMemo(() => {
+    if (!selectedReturnOrder || !selectedReturnDispatch) return [];
+    const { requisition } = selectedReturnOrder;
+    const dispatch = selectedReturnDispatch;
+    return [
+      ['Date', requisition.requisition_date || new Date(requisition.req_date).toLocaleDateString()],
+      ['Supply ID', dispatch.supply_id],
+      ['Location', requisition.location],
+      ['In-Charge', userNames[requisition.in_charge_id] || requisition.in_charge_id],
+      ['Engineer', requisition.contact_person],
+      ['Structure Name', requisition.structure_name],
+      ['Structure ID', requisition.structure_id],
+      ['Grade', requisition.grade],
+      ['Quantity', requisition.requested_qty],
+      ['Batching Plant ID', dispatch.batching_plant_id],
+      ['Vehicle Number', dispatch.tm_number],
+      ['Quantity Dispatched', dispatch.actual_dispatched_qty],
+      ['Dispatch Time', new Date(dispatch.dispatch_time).toLocaleString()],
+      ['Receipt at Site', dispatch.receipt_at_site_time ? new Date(dispatch.receipt_at_site_time).toLocaleString() : '-'],
+      ['Release from Site', dispatch.release_from_site_time ? new Date(dispatch.release_from_site_time).toLocaleString() : '-'],
+      ['Destination Location', dispatch.receipt_location],
+    ] as Array<[string, unknown]>;
+  }, [selectedReturnDispatch, selectedReturnOrder, userNames]);
 
   const openDispatch = (req: ConcreteRequisition) => {
     setSelectedRequisition(req);
+    setDispatchVehicles([]);
+    setSelectedDispatchVehicleId(null);
     setMessage(null);
+    setDispatchMessage(null);
     reset({
       batching_plant_id: '',
       tm_number: '',
-      actual_dispatched_qty: req.requested_qty,
+      actual_dispatched_qty: Math.max(0, req.requested_qty - (dispatchTotals[req.supply_id] || 0)) || undefined,
       dispatch_time: new Date().toISOString().slice(0, 16),
       receipt_location: req.location,
+    });
+  };
+
+  const closeDispatch = async () => {
+    setSelectedRequisition(null);
+    setDispatchVehicles([]);
+    setSelectedDispatchVehicleId(null);
+    setDispatchMessage(null);
+    await fetchValidatedRequisitions();
+  };
+
+  const clearVehicleForm = (remainingQty = dispatchSummary.remainingQty) => {
+    setSelectedDispatchVehicleId(null);
+    reset({
+      batching_plant_id: '',
+      tm_number: '',
+      actual_dispatched_qty: remainingQty || undefined,
+      dispatch_time: new Date().toISOString().slice(0, 16),
+      receipt_location: selectedRequisition?.location || '',
+    });
+  };
+
+  const selectDispatchVehicle = (vehicle: StagedDispatchVehicle) => {
+    setSelectedDispatchVehicleId(vehicle.vehicle_id);
+    reset({
+      batching_plant_id: vehicle.batching_plant_id,
+      tm_number: vehicle.tm_number,
+      actual_dispatched_qty: vehicle.actual_dispatched_qty,
+      dispatch_time: vehicle.dispatch_time,
+      receipt_location: vehicle.receipt_location,
     });
   };
 
@@ -119,36 +294,178 @@ const ProductionView: React.FC = () => {
     if (!selectedRequisition || !data.actual_dispatched_qty) return;
 
     setDispatching(true);
-    setMessage(null);
+    setDispatchMessage(null);
 
     try {
-      const result = await productionAPI.createDispatch({
-        supply_id: selectedRequisition.supply_id,
+      const nextVehicle: StagedDispatchVehicle = {
+        vehicle_id: selectedDispatchVehicleId || crypto.randomUUID(),
         batching_plant_id: data.batching_plant_id,
         tm_number: data.tm_number,
         actual_dispatched_qty: data.actual_dispatched_qty,
-        dispatch_time: new Date(data.dispatch_time).toISOString(),
+        dispatch_time: data.dispatch_time,
+        receipt_location: data.receipt_location,
+      };
+
+      const nextVehicles = selectedDispatchVehicleId
+        ? dispatchVehicles.map((vehicle) =>
+            vehicle.vehicle_id === selectedDispatchVehicleId ? nextVehicle : vehicle
+          )
+        : [...dispatchVehicles, nextVehicle];
+      const nextDispatchedQty = nextVehicles.reduce(
+        (total, vehicle) => total + vehicle.actual_dispatched_qty,
+        0
+      );
+      const existingDispatchedQty = dispatchTotals[selectedRequisition.supply_id] || 0;
+      const totalAfterSave = existingDispatchedQty + nextDispatchedQty;
+
+      if (totalAfterSave > selectedRequisition.requested_qty) {
+        setDispatchMessage({
+          type: 'error',
+          text: `Cannot dispatch extra concrete. Requested: ${selectedRequisition.requested_qty.toFixed(2)} cum, already dispatched: ${existingDispatchedQty.toFixed(2)} cum, staged total: ${nextDispatchedQty.toFixed(2)} cum.`,
+        });
+        return;
+      }
+
+      const nextRemainingQty = Math.max(0, selectedRequisition.requested_qty - totalAfterSave);
+
+      setDispatchVehicles(nextVehicles);
+      setDispatchMessage({
+        type: 'success',
+        text: selectedDispatchVehicleId
+          ? `Vehicle ${data.tm_number} updated. Remaining quantity: ${nextRemainingQty.toFixed(2)} cum.`
+          : `Vehicle ${data.tm_number} added. Remaining quantity: ${nextRemainingQty.toFixed(2)} cum.`,
+      });
+
+      setSelectedDispatchVehicleId(null);
+      reset({
+        batching_plant_id: data.batching_plant_id,
+        tm_number: '',
+        actual_dispatched_qty: nextRemainingQty || undefined,
+        dispatch_time: new Date().toISOString().slice(0, 16),
         receipt_location: data.receipt_location,
       });
-
-      const wastage = selectedRequisition.requested_qty - result.actual_dispatched_qty;
-      const wastagePercent = ((wastage / selectedRequisition.requested_qty) * 100).toFixed(2);
-
-      setMessage({
-        type: 'success',
-        text: `Dispatch logged for TM ${data.tm_number}. Wastage: ${wastagePercent}%.`,
-      });
-
-      setSelectedRequisition(null);
-      await fetchValidatedRequisitions();
     } catch (error: any) {
       console.error('Dispatch error:', error);
-      setMessage({
+      setDispatchMessage({
         type: 'error',
         text: getErrorMessage(error, 'Failed to log dispatch'),
       });
     } finally {
       setDispatching(false);
+    }
+  };
+
+  const openReturnToPlant = (order: ReturnToPlantOrder) => {
+    const firstDispatch = order.dispatches[0];
+    if (!firstDispatch) return;
+    setSelectedReturnOrder(order);
+    setSelectedReturnDispatchId(firstDispatch.dispatch_id);
+    setMessage(null);
+    resetReturn({
+      return_to_plant_date: today(),
+      return_to_plant_time: '',
+      remarks: firstDispatch.remarks || '',
+    });
+  };
+
+  const selectReturnDispatch = (dispatch: ProductionDispatch) => {
+    setSelectedReturnDispatchId(dispatch.dispatch_id);
+    resetReturn({
+      return_to_plant_date: dispatch.return_to_plant_time
+        ? new Date(dispatch.return_to_plant_time).toISOString().slice(0, 10)
+        : today(),
+      return_to_plant_time: dispatch.return_to_plant_time
+        ? new Date(dispatch.return_to_plant_time).toTimeString().slice(0, 5)
+        : '',
+      remarks: dispatch.remarks || '',
+    });
+  };
+
+  const onReturnSubmit = async (data: ReturnToPlantFormData) => {
+    if (!selectedReturnDispatch) return;
+
+    setReturning(true);
+    setMessage(null);
+
+    try {
+      await productionAPI.updateReturnToPlant(selectedReturnDispatch.dispatch_id, {
+        return_to_plant_time: combineDateTime(data.return_to_plant_date, data.return_to_plant_time),
+        remarks: data.remarks || undefined,
+      });
+
+      const refreshedDispatches = await productionAPI.getDispatchesBySupply(selectedReturnDispatch.supply_id);
+      const remainingReturns = refreshedDispatches.filter((dispatch) => !dispatch.return_to_plant_time).length;
+      setMessage({
+        type: 'success',
+        text: remainingReturns === 0
+          ? 'Return to plant recorded. Requisition moved to past requisitions.'
+          : `Return to plant recorded. ${remainingReturns} vehicle${remainingReturns === 1 ? '' : 's'} still pending return.`,
+      });
+      setSelectedReturnOrder(null);
+      setSelectedReturnDispatchId(null);
+      await fetchValidatedRequisitions();
+    } catch (error: any) {
+      console.error('Return-to-plant error:', error);
+      setMessage({
+        type: 'error',
+        text: getErrorMessage(error, 'Failed to record return to plant'),
+      });
+    } finally {
+      setReturning(false);
+    }
+  };
+
+  const finalizeDispatchVehicles = async () => {
+    if (!selectedRequisition || dispatchVehicles.length === 0) {
+      setDispatchMessage({ type: 'error', text: 'Add at least one vehicle before submitting.' });
+      return;
+    }
+
+    const existingDispatchedQty = dispatchTotals[selectedRequisition.supply_id] || 0;
+    const stagedDispatchedQty = dispatchVehicles.reduce(
+      (total, vehicle) => total + vehicle.actual_dispatched_qty,
+      0
+    );
+    if (existingDispatchedQty + stagedDispatchedQty > selectedRequisition.requested_qty) {
+      setDispatchMessage({
+        type: 'error',
+        text: `Cannot submit extra concrete. Requested: ${selectedRequisition.requested_qty.toFixed(2)} cum, already dispatched: ${existingDispatchedQty.toFixed(2)} cum, staged total: ${stagedDispatchedQty.toFixed(2)} cum.`,
+      });
+      return;
+    }
+
+    setFinalizingDispatch(true);
+    setDispatchMessage(null);
+
+    try {
+      for (const vehicle of dispatchVehicles) {
+        await productionAPI.createDispatch({
+          supply_id: selectedRequisition.supply_id,
+          batching_plant_id: vehicle.batching_plant_id,
+          tm_number: vehicle.tm_number,
+          actual_dispatched_qty: vehicle.actual_dispatched_qty,
+          dispatch_time: new Date(vehicle.dispatch_time).toISOString(),
+          receipt_location: vehicle.receipt_location,
+        });
+      }
+
+      setMessage({
+        type: 'success',
+        text: `${dispatchVehicles.length} vehicle${dispatchVehicles.length === 1 ? '' : 's'} submitted for dispatch.`,
+      });
+      setSelectedRequisition(null);
+      setDispatchVehicles([]);
+      setSelectedDispatchVehicleId(null);
+      setDispatchMessage(null);
+      await fetchValidatedRequisitions();
+    } catch (error: any) {
+      console.error('Dispatch finalization error:', error);
+      setDispatchMessage({
+        type: 'error',
+        text: getErrorMessage(error, 'Failed to submit dispatch vehicles'),
+      });
+    } finally {
+      setFinalizingDispatch(false);
     }
   };
 
@@ -170,8 +487,8 @@ const ProductionView: React.FC = () => {
         <RequisitionFilters
           filters={filters}
           onChange={setFilters}
-          resultCount={filteredRequisitions.length + filteredHistory.length}
-          totalCount={requisitions.length + history.length}
+          resultCount={filteredRequisitions.length + filteredReturnOrders.length + filteredHistory.length}
+          totalCount={requisitions.length + returnOrders.length + history.length}
           className="xl:w-fit"
         />
       </div>
@@ -184,7 +501,7 @@ const ProductionView: React.FC = () => {
 
       <div className="overflow-hidden rounded-lg bg-white shadow-md transition-shadow duration-200 ease-out hover:shadow-lg">
         <div className="bg-[#003F72] px-5 py-4 text-white">
-          <h2 className="text-xl font-semibold">Validated Orders ({filteredRequisitions.length})</h2>
+          <h2 className="text-xl font-semibold">Approved Orders ({filteredRequisitions.length})</h2>
         </div>
 
         <div className="overflow-x-auto">
@@ -197,6 +514,7 @@ const ProductionView: React.FC = () => {
                 <th className={tableHeaderClass}>Structure</th>
                 <th className={tableHeaderClass}>Grade</th>
                 <th className={numericTableHeaderClass}>Requested Qty</th>
+                <th className={numericTableHeaderClass}>Dispatched Qty</th>
                 <th className={tableHeaderClass}>Action</th>
               </tr>
             </thead>
@@ -209,6 +527,7 @@ const ProductionView: React.FC = () => {
                   <td className="px-4 py-3 text-sm">{req.structure_name}</td>
                   <td className="px-4 py-3 text-sm">{req.grade}</td>
                   <td className="px-4 py-3 text-right text-sm">{req.requested_qty.toFixed(2)}</td>
+                  <td className="px-4 py-3 text-right text-sm">{(dispatchTotals[req.supply_id] || 0).toFixed(2)}</td>
                   <td className="px-4 py-3">
                     <button
                       type="button"
@@ -223,8 +542,67 @@ const ProductionView: React.FC = () => {
 
               {filteredRequisitions.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-500">
-                    No validated requisitions ready for dispatch
+                  <td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-500">
+                    No approved requisitions ready for dispatch
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-lg bg-white shadow-md transition-shadow duration-200 ease-out hover:shadow-lg">
+        <div className="bg-[#003F72] px-5 py-4 text-white">
+          <h2 className="text-xl font-semibold">Return to Plant ({filteredReturnOrders.length})</h2>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1060px]">
+            <thead className="bg-gray-100">
+              <tr>
+                <th className={tableHeaderClass}>Supply ID</th>
+                <th className={tableHeaderClass}>Date</th>
+                <th className={tableHeaderClass}>Location</th>
+                <th className={tableHeaderClass}>Vehicles</th>
+                <th className={tableHeaderClass}>Plants</th>
+                <th className={numericTableHeaderClass}>Qty Dispatched</th>
+                <th className={tableHeaderClass}>Pending Return</th>
+                <th className={tableHeaderClass}>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredReturnOrders.map((order) => (
+                <tr key={order.supply_id} className="border-t border-gray-100 transition-colors duration-150 ease-out hover:bg-blue-50/45">
+                  <td className="px-4 py-3 font-mono text-sm">{order.supply_id}</td>
+                  <td className="px-4 py-3 text-sm">{formatOrderDate(order.requisition)}</td>
+                  <td className="px-4 py-3 text-sm">{order.requisition.location}</td>
+                  <td className="px-4 py-3 text-sm">
+                    {order.dispatches.map((dispatch) => dispatch.tm_number).join(', ')}
+                  </td>
+                  <td className="px-4 py-3 text-sm">
+                    {Array.from(new Set(order.dispatches.map((dispatch) => dispatch.batching_plant_id || '-'))).join(', ')}
+                  </td>
+                  <td className="px-4 py-3 text-right text-sm">
+                    {order.dispatches.reduce((total, dispatch) => total + dispatch.actual_dispatched_qty, 0).toFixed(2)}
+                  </td>
+                  <td className="px-4 py-3 text-sm">{order.dispatches.length}</td>
+                  <td className="px-4 py-3">
+                    <button
+                      type="button"
+                      onClick={() => openReturnToPlant(order)}
+                      className={tableActionButtonClass}
+                    >
+                      Open
+                    </button>
+                  </td>
+                </tr>
+              ))}
+
+              {filteredReturnOrders.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-500">
+                    No acknowledged dispatches waiting for return to plant
                   </td>
                 </tr>
               )}
@@ -234,6 +612,8 @@ const ProductionView: React.FC = () => {
       </div>
 
       <PastRequisitionsTable requisitions={filteredHistory} onView={setViewingOrder} />
+
+      <PastRequisitionsModalButton requisitions={pastRequisitions} />
 
       {viewingOrder && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4">
@@ -265,131 +645,360 @@ const ProductionView: React.FC = () => {
               </div>
               <button
                 type="button"
-                onClick={() => setSelectedRequisition(null)}
+                onClick={closeDispatch}
                 className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700"
               >
                 Close
               </button>
             </div>
 
-            <div className="grid gap-6 p-6 xl:grid-cols-[1fr_380px]">
-              <div className="h-fit space-y-4">
-                <h3 className="text-sm font-bold uppercase tracking-wide text-[#003F72]">
-                  Order Details
-                </h3>
-                <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                  {([
-                    ['Date', selectedRequisition.requisition_date || new Date(selectedRequisition.req_date).toLocaleDateString()],
-                    ['Supply ID', selectedRequisition.supply_id],
-                    ['Location', selectedRequisition.location],
-                    ['In-Charge', userNames[selectedRequisition.in_charge_id] || selectedRequisition.in_charge_id],
-                    ['Engineer', selectedRequisition.contact_person],
-                    ['Structure Name', selectedRequisition.structure_name],
-                    ['Structure ID', selectedRequisition.structure_id],
-                    ['Grade', selectedRequisition.grade],
-                    ['Quantity', selectedRequisition.requested_qty],
-                    ['Time', selectedRequisition.pour_time],
-                    ['Placement by', selectedRequisition.placement_by],
-                    ['Planning Remarks', selectedRequisition.planning_remarks],
-                  ] as Array<[string, unknown]>).map(([label, value]) => (
-                    <div key={label} className="min-w-0 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
-                      <dt className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{label}</dt>
-                      <dd className="mt-1 truncate text-sm font-medium text-gray-900" title={display(value)}>
-                        {display(value)}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
+            {dispatchMessage && (
+              <div className={`mx-6 mt-4 alert ${dispatchMessage.type === 'success' ? 'alert-success' : 'alert-danger'}`}>
+                {dispatchMessage.text}
               </div>
+            )}
 
+            <div className="grid gap-6 p-6 xl:grid-cols-[340px_1fr]">
               <aside className="h-fit rounded-lg border border-gray-200 bg-gray-50 p-4">
                 <h3 className="mb-4 text-sm font-bold uppercase tracking-wide text-[#003F72]">
-                  Dispatch Details
+                  Dispatch Summary
                 </h3>
 
-                <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-                  <div>
-                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
-                      Batching Plant ID
-                    </label>
-                    <input
-                      className={fieldClass}
-                      {...register('batching_plant_id', { required: 'Batching plant ID is required' })}
-                    />
-                    {errors.batching_plant_id && (
-                      <p className="mt-1 text-xs text-red-600">{errors.batching_plant_id.message}</p>
+                <dl className="grid grid-cols-1 gap-3">
+                  <div className="rounded-md bg-white px-3 py-2 shadow-sm">
+                    <dt className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Total Qty</dt>
+                    <dd className="mt-1 text-lg font-bold text-gray-900">{dispatchSummary.totalQty.toFixed(2)} cum</dd>
+                  </div>
+                  <div className="rounded-md bg-white px-3 py-2 shadow-sm">
+                    <dt className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Qty Dispatched</dt>
+                    <dd className="mt-1 text-lg font-bold text-[#003F72]">{dispatchSummary.dispatchedQty.toFixed(2)} cum</dd>
+                  </div>
+                  <div className="rounded-md bg-white px-3 py-2 shadow-sm">
+                    <dt className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Remaining Qty</dt>
+                    <dd className="mt-1 text-lg font-bold text-gray-900">{dispatchSummary.remainingQty.toFixed(2)} cum</dd>
+                  </div>
+                </dl>
+
+                <div className="mt-5">
+                  <h4 className="mb-3 text-xs font-bold uppercase tracking-wide text-gray-600">
+                    Vehicles Added ({dispatchVehicles.length})
+                  </h4>
+                  <div className="max-h-[42vh] space-y-3 overflow-y-auto pr-1">
+                    {dispatchVehicles.map((vehicle) => (
+                      <button
+                        key={vehicle.vehicle_id}
+                        type="button"
+                        onClick={() => selectDispatchVehicle(vehicle)}
+                        className={`w-full rounded-md border px-3 py-2 text-left shadow-sm transition-colors duration-150 ease-out ${
+                          selectedDispatchVehicleId === vehicle.vehicle_id
+                            ? 'border-[#003F72] bg-blue-50'
+                            : 'border-gray-200 bg-white hover:bg-blue-50/45'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-bold text-gray-900" title={vehicle.tm_number}>
+                              {vehicle.tm_number}
+                            </p>
+                            <p className="text-xs text-gray-500">{vehicle.batching_plant_id || '-'}</p>
+                          </div>
+                          <span className="shrink-0 text-sm font-semibold text-[#003F72]">
+                            {vehicle.actual_dispatched_qty.toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="mt-2 text-xs text-gray-600">
+                          <p>{new Date(vehicle.dispatch_time).toLocaleString()}</p>
+                          <p className="truncate" title={vehicle.receipt_location || '-'}>
+                            {vehicle.receipt_location || '-'}
+                          </p>
+                        </div>
+                      </button>
+                    ))}
+
+                    {dispatchVehicles.length === 0 && (
+                      <div className="rounded-md border border-dashed border-gray-300 bg-white px-3 py-6 text-center text-sm text-gray-500">
+                        No vehicles added yet.
+                      </div>
                     )}
                   </div>
-
-                  <div>
-                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
-                      Allocated Vehicle
-                    </label>
-                    <input
-                      className={fieldClass}
-                      {...register('tm_number', { required: 'Allocated vehicle is required' })}
-                    />
-                    {errors.tm_number && (
-                      <p className="mt-1 text-xs text-red-600">{errors.tm_number.message}</p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
-                      Quantity Dispatched (cum)
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      placeholder="0"
-                      className={fieldClass}
-                      {...register('actual_dispatched_qty', {
-                        required: 'Quantity is required',
-                        min: { value: 0.1, message: 'Must be greater than 0' },
-                        valueAsNumber: true,
-                      })}
-                    />
-                    {errors.actual_dispatched_qty && (
-                      <p className="mt-1 text-xs text-red-600">{errors.actual_dispatched_qty.message}</p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
-                      Dispatch time
-                    </label>
-                    <input
-                      type="datetime-local"
-                      className={fieldClass}
-                      {...register('dispatch_time', { required: 'Dispatch time is required' })}
-                    />
-                    {errors.dispatch_time && (
-                      <p className="mt-1 text-xs text-red-600">{errors.dispatch_time.message}</p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
-                      Receipt Location
-                    </label>
-                    <input
-                      className={fieldClass}
-                      {...register('receipt_location', { required: 'Receipt location is required' })}
-                    />
-                    {errors.receipt_location && (
-                      <p className="mt-1 text-xs text-red-600">{errors.receipt_location.message}</p>
-                    )}
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={dispatching}
-                    className="w-full rounded-md bg-[#003F72] px-5 py-3 text-sm font-semibold text-white hover:bg-[#002B4E] disabled:bg-gray-400"
-                  >
-                    {dispatching ? 'Submitting...' : 'Submit Dispatch'}
-                  </button>
-                </form>
+                </div>
               </aside>
+
+              <div className="min-w-0 space-y-6">
+                <section className="space-y-4">
+                  <h3 className="text-sm font-bold uppercase tracking-wide text-[#003F72]">
+                    Order Details
+                  </h3>
+                  <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    {([
+                      ['Date', selectedRequisition.requisition_date || new Date(selectedRequisition.req_date).toLocaleDateString()],
+                      ['Supply ID', selectedRequisition.supply_id],
+                      ['Location', selectedRequisition.location],
+                      ['In-Charge', userNames[selectedRequisition.in_charge_id] || selectedRequisition.in_charge_id],
+                      ['Engineer', selectedRequisition.contact_person],
+                      ['Structure Name', selectedRequisition.structure_name],
+                      ['Structure ID', selectedRequisition.structure_id],
+                      ['Grade', selectedRequisition.grade],
+                      ['Quantity', selectedRequisition.requested_qty],
+                      ['Time', selectedRequisition.pour_time],
+                      ['Placement by', selectedRequisition.placement_by],
+                      ['Planning Remarks', selectedRequisition.planning_remarks],
+                    ] as Array<[string, unknown]>).map(([label, value]) => (
+                      <div key={label} className="min-w-0 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
+                        <dt className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{label}</dt>
+                        <dd className="mt-1 truncate text-sm font-medium text-gray-900" title={display(value)}>
+                          {display(value)}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                </section>
+
+                <section className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                  <h3 className="mb-4 text-sm font-bold uppercase tracking-wide text-[#003F72]">
+                    Add Dispatch Details
+                  </h3>
+
+                  <form onSubmit={handleSubmit(onSubmit)} className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
+                        Batching Plant ID
+                      </label>
+                      <input
+                        className={fieldClass}
+                        {...register('batching_plant_id', { required: 'Batching plant ID is required' })}
+                      />
+                      {errors.batching_plant_id && (
+                        <p className="mt-1 text-xs text-red-600">{errors.batching_plant_id.message}</p>
+                    )}
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
+                        Vehicle Number
+                      </label>
+                      <input
+                        className={fieldClass}
+                        {...register('tm_number', { required: 'Vehicle number is required' })}
+                      />
+                      {errors.tm_number && (
+                        <p className="mt-1 text-xs text-red-600">{errors.tm_number.message}</p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
+                        Quantity in Vehicle (cum)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="0"
+                        className={fieldClass}
+                        {...register('actual_dispatched_qty', {
+                          required: 'Quantity is required',
+                          min: { value: 0.1, message: 'Must be greater than 0' },
+                          valueAsNumber: true,
+                        })}
+                      />
+                      {errors.actual_dispatched_qty && (
+                        <p className="mt-1 text-xs text-red-600">{errors.actual_dispatched_qty.message}</p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
+                        Dispatch Time
+                      </label>
+                      <input
+                        type="datetime-local"
+                        className={fieldClass}
+                        {...register('dispatch_time', { required: 'Dispatch time is required' })}
+                      />
+                      {errors.dispatch_time && (
+                        <p className="mt-1 text-xs text-red-600">{errors.dispatch_time.message}</p>
+                      )}
+                    </div>
+
+                    <div className="lg:col-span-2">
+                      <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
+                        Destination Location
+                      </label>
+                      <input
+                        className={fieldClass}
+                        {...register('receipt_location', { required: 'Destination location is required' })}
+                      />
+                      {errors.receipt_location && (
+                        <p className="mt-1 text-xs text-red-600">{errors.receipt_location.message}</p>
+                      )}
+                    </div>
+
+                    <div className="flex justify-end lg:col-span-2">
+                      {selectedDispatchVehicleId && (
+                        <button
+                          type="button"
+                          onClick={() => clearVehicleForm()}
+                          className="mr-3 rounded-md border border-[#003F72] px-5 py-3 text-sm font-semibold text-[#003F72] hover:bg-[#003F72]/10"
+                        >
+                          New Vehicle
+                        </button>
+                      )}
+                      <button
+                        type="submit"
+                        disabled={dispatching}
+                        className="rounded-md bg-[#003F72] px-5 py-3 text-sm font-semibold text-white hover:bg-[#002B4E] disabled:bg-gray-400"
+                      >
+                        {dispatching ? 'Saving...' : selectedDispatchVehicleId ? 'Update Vehicle' : 'Add Vehicle'}
+                      </button>
+                    </div>
+                  </form>
+                </section>
+
+                <div className="flex justify-end border-t border-gray-200 pt-4">
+                  <button
+                    type="button"
+                    onClick={finalizeDispatchVehicles}
+                    disabled={finalizingDispatch || dispatchVehicles.length === 0}
+                    className="rounded-md bg-green-700 px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-green-800 disabled:bg-gray-400"
+                  >
+                    {finalizingDispatch ? 'Submitting...' : 'Submit'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedReturnOrder && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4">
+          <div className="max-h-[92vh] w-full max-w-7xl overflow-y-auto rounded-lg bg-white shadow-xl">
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">Return to Plant</h2>
+                <p className="font-mono text-sm font-semibold text-[#003F72]">
+                  {selectedReturnOrder.supply_id}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedReturnOrder(null);
+                  setSelectedReturnDispatchId(null);
+                }}
+                className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="grid gap-6 p-6 xl:grid-cols-[340px_1fr]">
+              <aside className="h-fit rounded-lg border border-gray-200 bg-gray-50 p-4">
+                <h3 className="mb-4 text-sm font-bold uppercase tracking-wide text-[#003F72]">
+                  Vehicle Summary
+                </h3>
+
+                <div>
+                  <h4 className="mb-3 text-xs font-bold uppercase tracking-wide text-gray-600">
+                    Vehicles ({selectedReturnOrder.dispatches.length})
+                  </h4>
+                  <div className="max-h-[42vh] space-y-3 overflow-y-auto pr-1">
+                    {selectedReturnOrder.dispatches.map((dispatch) => (
+                      <button
+                        key={dispatch.dispatch_id}
+                        type="button"
+                        onClick={() => selectReturnDispatch(dispatch)}
+                        className={`w-full rounded-md border px-3 py-2 text-left shadow-sm transition-colors duration-150 ease-out ${
+                          selectedReturnDispatch?.dispatch_id === dispatch.dispatch_id
+                            ? 'border-[#003F72] bg-blue-50'
+                            : 'border-gray-200 bg-white hover:bg-blue-50/45'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-bold text-gray-900" title={dispatch.tm_number}>
+                              {dispatch.tm_number}
+                            </p>
+                            <p className="text-xs text-gray-500">{dispatch.batching_plant_id || '-'}</p>
+                          </div>
+                          <span className="shrink-0 text-sm font-semibold text-[#003F72]">
+                            {dispatch.actual_dispatched_qty.toFixed(2)}
+                          </span>
+                        </div>
+                        <p className="mt-2 text-xs text-gray-600">
+                          {dispatch.return_to_plant_time ? 'Returned' : 'Pending return'}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </aside>
+
+              <div className="min-w-0 space-y-6">
+                <section className="h-fit space-y-4">
+                  <h3 className="text-sm font-bold uppercase tracking-wide text-[#003F72]">
+                    Dispatch Details
+                  </h3>
+                  <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    {selectedReturnDetails.map(([label, value]) => (
+                      <div key={label} className="min-w-0 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
+                        <dt className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{label}</dt>
+                        <dd className="mt-1 truncate text-sm font-medium text-gray-900" title={display(value)}>
+                          {display(value)}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                </section>
+
+                <section className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                  <h3 className="mb-4 text-sm font-bold uppercase tracking-wide text-[#003F72]">
+                    Plant Return
+                  </h3>
+
+                  <form onSubmit={handleReturnSubmit(onReturnSubmit)} className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
+                        Return to Plant
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="date"
+                          className={fieldClass}
+                          {...registerReturn('return_to_plant_date', { required: 'Return date is required' })}
+                        />
+                        <input
+                          type="time"
+                          className={fieldClass}
+                          {...registerReturn('return_to_plant_time', { required: 'Return time is required' })}
+                        />
+                      </div>
+                      {(returnErrors.return_to_plant_date || returnErrors.return_to_plant_time) && (
+                        <p className="mt-1 text-xs text-red-600">
+                          {returnErrors.return_to_plant_date?.message || returnErrors.return_to_plant_time?.message}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="lg:col-span-2">
+                      <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
+                        Remarks
+                      </label>
+                      <textarea className={`${fieldClass} h-24 resize-none`} {...registerReturn('remarks')} />
+                    </div>
+
+                    <div className="flex justify-end lg:col-span-2">
+                      <button
+                        type="submit"
+                        disabled={returning}
+                        className="rounded-md bg-[#003F72] px-5 py-3 text-sm font-semibold text-white hover:bg-[#002B4E] disabled:bg-gray-400"
+                      >
+                        {returning ? 'Submitting...' : 'Submit'}
+                      </button>
+                    </div>
+                  </form>
+                </section>
+              </div>
             </div>
           </div>
         </div>

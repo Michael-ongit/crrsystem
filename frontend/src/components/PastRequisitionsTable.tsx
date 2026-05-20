@@ -11,8 +11,8 @@ interface PastRequisitionsTableProps {
 
 const PastRequisitionsTable: React.FC<PastRequisitionsTableProps> = ({
   requisitions,
-  title = 'Past Requisitions',
-  emptyText = 'No past approved or dispatched requisitions found.',
+  title = 'Ongoing Requisitions',
+  emptyText = 'No ongoing requisitions found.',
   onView,
 }) => (
   <div className="overflow-hidden rounded-lg bg-white shadow-md transition-shadow duration-200 ease-out hover:shadow-lg">

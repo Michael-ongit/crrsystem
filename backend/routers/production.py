@@ -8,8 +8,8 @@ from models import (
 )
 from . import auth
 from schemas import (
-    DeliveryTimeUpdate, DispatchReconciliationUpdate,
-    ProductionDispatchCreate, ProductionDispatchResponse
+    DeliveryTimeUpdate, DispatchAcknowledgementUpdate, DispatchReconciliationUpdate,
+    ProductionDispatchCreate, ProductionDispatchResponse, ReturnToPlantUpdate
 )
 import logging
 
@@ -53,22 +53,34 @@ def create_dispatch(
                 detail=f"Requisition with supply_id '{dispatch.supply_id}' not found"
             )
         
-        # Check if requisition is validated
+        # Check if requisition is approved or already partially dispatched.
         if requisition.status not in [RequisitionStatus.VALIDATED, RequisitionStatus.DISPATCHED]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Requisition must be Validated to dispatch. Current status: {requisition.status}"
             )
         
-        # Validate dispatch quantity doesn't exceed requested
-        if dispatch.actual_dispatched_qty > requisition.requested_qty:
-            logger.warning(
-                f"Dispatch qty {dispatch.actual_dispatched_qty} exceeds requested "
-                f"{requisition.requested_qty} for {dispatch.supply_id}"
+        existing_dispatched_qty = (
+            db.query(ProductionDispatch)
+            .filter(ProductionDispatch.supply_id == dispatch.supply_id)
+            .with_entities(ProductionDispatch.actual_dispatched_qty)
+            .all()
+        )
+        cumulative_dispatched_qty = sum(qty for (qty,) in existing_dispatched_qty) + dispatch.actual_dispatched_qty
+
+        if cumulative_dispatched_qty > requisition.requested_qty:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Dispatch quantity exceeds requested quantity. "
+                    f"Requested: {requisition.requested_qty:.2f}, "
+                    f"already dispatched: {cumulative_dispatched_qty - dispatch.actual_dispatched_qty:.2f}, "
+                    f"attempted: {dispatch.actual_dispatched_qty:.2f}"
+                )
             )
         
-        # Calculate wastage
-        wastage_qty = max(0, requisition.requested_qty - dispatch.actual_dispatched_qty)
+        # Calculate current remaining quantity after this vehicle.
+        wastage_qty = max(0, requisition.requested_qty - cumulative_dispatched_qty)
         wastage_percentage = (wastage_qty / requisition.requested_qty * 100) if requisition.requested_qty > 0 else 0
         
         # Create dispatch record
@@ -83,15 +95,19 @@ def create_dispatch(
             wastage_qty=wastage_qty
         )
         
-        # Update requisition status to Dispatched
-        requisition.status = RequisitionStatus.DISPATCHED
+        # Keep partially dispatched requisitions approved until the full quantity is dispatched.
+        requisition.status = (
+            RequisitionStatus.DISPATCHED
+            if cumulative_dispatched_qty >= requisition.requested_qty
+            else RequisitionStatus.VALIDATED
+        )
         requisition.updated_at = datetime.utcnow()
         
         # Log ACE limit violations
         if wastage_percentage > 1.0:
             logger.warning(
                 f"ACE LIMIT VIOLATION: {dispatch.supply_id} has wastage of {wastage_percentage:.2f}% "
-                f"(limit: 1.0%). Requested: {requisition.requested_qty}, Dispatched: {dispatch.actual_dispatched_qty}"
+                f"(limit: 1.0%). Requested: {requisition.requested_qty}, Dispatched: {cumulative_dispatched_qty}"
             )
         
         db.add(db_dispatch)
@@ -229,6 +245,146 @@ def update_delivery_time(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update delivery time"
+        )
+
+
+@router.put(
+    "/dispatch/{dispatch_id}/acknowledge",
+    response_model=ProductionDispatchResponse,
+    summary="Acknowledge dispatched order at site",
+    description="Record site receipt and release timings before return-to-plant reconciliation."
+)
+def acknowledge_dispatch(
+    dispatch_id: str,
+    acknowledgement: DispatchAcknowledgementUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(auth.require_roles(UserRole.PRODUCTION, UserRole.ADMIN)),
+):
+    """Record site acknowledgement while keeping the requisition in dispatched state."""
+    try:
+        dispatch = db.query(ProductionDispatch).filter(
+            ProductionDispatch.dispatch_id == dispatch_id
+        ).first()
+
+        if not dispatch:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Dispatch with id '{dispatch_id}' not found"
+            )
+
+        requisition = db.query(ConcreteRequisition).filter(
+            ConcreteRequisition.supply_id == dispatch.supply_id
+        ).first()
+
+        dispatch.receipt_at_site_time = acknowledgement.receipt_at_site_time
+        dispatch.release_from_site_time = acknowledgement.release_from_site_time
+        dispatch.delivery_time = acknowledgement.receipt_at_site_time
+        dispatch.remarks = acknowledgement.remarks
+        dispatch.updated_at = datetime.utcnow()
+
+        if requisition:
+            total_dispatched_qty = sum(
+                qty for (qty,) in db.query(ProductionDispatch.actual_dispatched_qty)
+                .filter(ProductionDispatch.supply_id == dispatch.supply_id)
+                .all()
+            )
+            requisition.status = (
+                RequisitionStatus.RETURNING
+                if total_dispatched_qty >= requisition.requested_qty
+                else RequisitionStatus.VALIDATED
+            )
+            requisition.updated_at = datetime.utcnow()
+
+        db.commit()
+        db.refresh(dispatch)
+        return dispatch
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error acknowledging dispatch: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to acknowledge dispatch"
+        )
+
+
+@router.put(
+    "/dispatch/{dispatch_id}/return-to-plant",
+    response_model=ProductionDispatchResponse,
+    summary="Record return-to-plant time",
+    description="Record return-to-plant timing and mark the requisition as reconciled."
+)
+def update_return_to_plant(
+    dispatch_id: str,
+    return_update: ReturnToPlantUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(auth.require_roles(UserRole.PRODUCTION, UserRole.ADMIN)),
+):
+    """Close the dispatch after site acknowledgement has been captured."""
+    try:
+        dispatch = db.query(ProductionDispatch).filter(
+            ProductionDispatch.dispatch_id == dispatch_id
+        ).first()
+
+        if not dispatch:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Dispatch with id '{dispatch_id}' not found"
+            )
+
+        if not dispatch.receipt_at_site_time or not dispatch.release_from_site_time:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Dispatch must be acknowledged at site before return to plant is recorded"
+            )
+
+        requisition = db.query(ConcreteRequisition).filter(
+            ConcreteRequisition.supply_id == dispatch.supply_id
+        ).first()
+
+        dispatch.return_to_plant_time = return_update.return_to_plant_time
+        if return_update.remarks is not None:
+            dispatch.remarks = return_update.remarks
+        dispatch.updated_at = datetime.utcnow()
+        db.flush()
+
+        if requisition:
+            total_dispatched_qty = sum(
+                qty for (qty,) in db.query(ProductionDispatch.actual_dispatched_qty)
+                .filter(ProductionDispatch.supply_id == dispatch.supply_id)
+                .all()
+            )
+            pending_returns = (
+                db.query(ProductionDispatch)
+                .filter(
+                    ProductionDispatch.supply_id == dispatch.supply_id,
+                    ProductionDispatch.return_to_plant_time.is_(None),
+                )
+                .count()
+            )
+            requisition.status = (
+                RequisitionStatus.RECONCILED
+                if total_dispatched_qty >= requisition.requested_qty and pending_returns == 0
+                else RequisitionStatus.RETURNING
+                if total_dispatched_qty >= requisition.requested_qty
+                else RequisitionStatus.VALIDATED
+            )
+            requisition.updated_at = datetime.utcnow()
+
+        db.commit()
+        db.refresh(dispatch)
+        return dispatch
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error updating return-to-plant time: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update return-to-plant time"
         )
 
 

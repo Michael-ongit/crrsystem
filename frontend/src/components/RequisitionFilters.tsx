@@ -74,6 +74,7 @@ const toOptions = (values: string[]): SelectOption[] =>
     .map((value) => ({ value, label: value }));
 
 const fieldValue = (requisition: ConcreteRequisition, field: ConcreteSearchField) => {
+  const displayStatus = requisition.status === 'Validated' ? 'Approved' : requisition.status;
   const values: Record<Exclude<RequisitionSearchField, 'all'>, unknown> = {
     supply_id: requisition.supply_id,
     requisition_date: formatOrderDate(requisition),
@@ -83,7 +84,7 @@ const fieldValue = (requisition: ConcreteRequisition, field: ConcreteSearchField
     structure_id: requisition.structure_id,
     pile_lift_id: requisition.pile_lift_id,
     grade: requisition.grade,
-    status: requisition.status,
+    status: displayStatus,
     approval_status: requisition.approval_status,
     planning_remarks: requisition.planning_remarks,
     contact_person: requisition.contact_person,
