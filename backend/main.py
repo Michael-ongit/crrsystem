@@ -11,7 +11,7 @@ from config import settings
 from database import init_db, get_db, SessionLocal
 from models import User, UserRole
 from schemas import UserCreate, UserResponse
-from routers import auth, requisitions, production, dashboard
+from routers import admin, auth, requisitions, production, dashboard
 
 # Configure logging
 logging.basicConfig(
@@ -195,6 +195,7 @@ async def get_user(
 
 # Include routers with prefixes
 app.include_router(auth.router)
+app.include_router(admin.router)
 app.include_router(requisitions.router, dependencies=[Depends(auth.get_current_user)])
 app.include_router(production.router, dependencies=[Depends(auth.get_current_user)])
 app.include_router(dashboard.router, dependencies=[Depends(auth.get_current_user)])

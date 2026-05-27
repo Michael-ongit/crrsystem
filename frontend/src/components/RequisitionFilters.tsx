@@ -72,7 +72,7 @@ const categoricalFields: HierarchyFilterField[] = [
   'pile_lift_id',
 ];
 const staticSelectOptions: Record<StaticSelectFilterField, string[]> = {
-  grade: ['M-10', 'M-20', 'M-25', 'M-30', 'M-45', 'M-45P', 'M-50', 'M-55', 'M-60'],
+  grade: [],
   status: ['Pending', 'Approved', 'Dispatched', 'Returning', 'Reconciled'],
   approval_status: ['Approved', 'Sent Back', 'Pending'],
 };
@@ -224,18 +224,23 @@ const RequisitionFilters: React.FC<RequisitionFiltersProps> = ({
     return selectedValues.map((value) => ({ value, label: value }));
   }, [filters.searchTerm]);
   const staticOptions = isStaticSelect
-    ? staticSelectOptions[filters.searchField as StaticSelectFilterField]
+    ? (filters.searchField === 'grade'
+      ? categoricalOptions.map((option) => option.value)
+      : staticSelectOptions[filters.searchField as StaticSelectFilterField])
     : [];
 
   useEffect(() => {
     let cancelled = false;
-    if (!isCategorical) {
+    if (!isCategorical && filters.searchField !== 'grade') {
       setCategoricalOptions([]);
       return;
     }
 
     setLoadingOptions(true);
-    loadCategoricalOptions(filters.searchField)
+    const optionsPromise = filters.searchField === 'grade'
+      ? hierarchyAPI.getDropdownOptions('concrete_grade')
+      : loadCategoricalOptions(filters.searchField);
+    optionsPromise
       .then((values) => {
         if (!cancelled) setCategoricalOptions(toOptions(values));
       })

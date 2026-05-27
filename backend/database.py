@@ -76,6 +76,7 @@ def init_db():
     migrate_concrete_requisition_columns()
     migrate_production_dispatch_columns()
     migrate_dispatch_receipt_allocations()
+    seed_dropdown_options_if_empty()
     seed_requisition_elements_if_empty()
     seed_supply_sequences_from_existing_requisitions()
     seed_sample_data_if_empty()
@@ -122,6 +123,41 @@ def seed_supply_sequences_from_existing_requisitions():
         logger.warning(f"Supply sequence bootstrap skipped or failed: {e}")
 
 
+def seed_dropdown_options_if_empty():
+    """Populate admin-managed dropdown lists with current application defaults."""
+    try:
+        from models import DropdownOption
+
+        defaults = {
+            "concrete_grade": ["M-10", "M-20", "M-25", "M-30", "M-45", "M-45P", "M-50", "M-55", "M-60"],
+            "placement_by": ["Boom Placer", "Direct - Chute"],
+        }
+
+        with SessionLocal() as db:
+            for category, values in defaults.items():
+                has_category = (
+                    db.query(DropdownOption.option_id)
+                    .filter(DropdownOption.category == category)
+                    .first()
+                    is not None
+                )
+                if has_category:
+                    continue
+                for index, value in enumerate(values, start=1):
+                    db.add(
+                        DropdownOption(
+                            category=category,
+                            value=value,
+                            label=value,
+                            sort_order=index,
+                            is_active=True,
+                        )
+                    )
+            db.commit()
+    except Exception as e:
+        logger.warning(f"Dropdown option seed skipped or failed: {e}")
+
+
 def seed_sample_data_if_empty():
     """Populate a fresh development database with realistic workflow examples."""
     if not settings.SEED_SAMPLE_DATA:
@@ -164,6 +200,8 @@ def migrate_concrete_requisition_columns():
         ("pour_time", "VARCHAR(20)", "VARCHAR(20)"),
         ("contact_person", "VARCHAR(255)", "VARCHAR(255)"),
         ("contact_number", "VARCHAR(50)", "VARCHAR(50)"),
+        ("in_charge_name", "VARCHAR(255)", "VARCHAR(255)"),
+        ("selected_in_charge", "VARCHAR(255)", "VARCHAR(255)"),
     ]
 
     with engine.begin() as conn:
@@ -193,6 +231,8 @@ def migrate_production_dispatch_columns():
         ("release_from_site_time", "DATETIME", "DATETIME"),
         ("return_to_plant_time", "DATETIME", "DATETIME"),
         ("remarks", "VARCHAR(2000)", "VARCHAR(2000)"),
+        ("returned_wastage_qty", "FLOAT NOT NULL DEFAULT 0", "FLOAT NOT NULL DEFAULT 0"),
+        ("remaining_concrete_disposition", "VARCHAR(50)", "VARCHAR(50)"),
     ]
 
     with engine.begin() as conn:

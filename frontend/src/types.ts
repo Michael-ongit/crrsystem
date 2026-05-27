@@ -43,6 +43,8 @@ export interface ConcreteRequisition {
   requisition_date?: string;
   location: string;
   in_charge_id: string;
+  in_charge_name?: string;
+  selected_in_charge?: string;
   structure_type?: string;
   structure_name: string;
   structure_id: string;
@@ -76,6 +78,8 @@ export interface ConcreteRequisitionCreate {
   requisition_date?: string;
   location: string;
   in_charge_id: string;
+  in_charge_name?: string;
+  selected_in_charge?: string;
   structure_type?: string;
   structure_name: string;
   structure_id: string;
@@ -139,6 +143,8 @@ export interface ProductionDispatch {
   return_to_plant_time?: string;
   remarks?: string;
   wastage_qty?: number;
+  returned_wastage_qty?: number;
+  remaining_concrete_disposition?: string;
   receipt_allocations?: DispatchReceiptAllocation[];
   allocated_qty?: number;
   remaining_qty?: number;
@@ -182,4 +188,49 @@ export interface AuthState {
   isAuthenticated: boolean;
   currentRole: UserRole;
   token: string | null;
+}
+
+export interface RegistrationInvite {
+  invite_id: string;
+  email: string;
+  name_hint?: string;
+  role: UserRole;
+  is_active: boolean;
+  registered_user_id?: string;
+  registered_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DropdownOption {
+  option_id: string;
+  category: string;
+  value: string;
+  label?: string;
+  is_active: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RequisitionElementOption {
+  id: number;
+  location: string;
+  structure_type: string;
+  structure_name: string;
+  structure_id: string;
+  element_id?: string;
+}
+
+export interface AdminSummary {
+  users: number;
+  allowed_emails: number;
+  active_allowed_emails: number;
+  dropdown_options: number;
+  reference_rows: number;
+  pending_requisitions: number;
+  approved_requisitions: number;
+  dispatches_pending_acknowledgement: number;
+  dispatches_pending_return: number;
+  planning_decisions: number;
 }

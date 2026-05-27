@@ -12,6 +12,10 @@ import {
   DashboardSummary,
   WastageRecord,
   TurnaroundTimeRecord,
+  AdminSummary,
+  DropdownOption,
+  RegistrationInvite,
+  RequisitionElementOption,
 } from './types';
 
 const defaultApiBaseURL = 'http://127.0.0.1:8020';
@@ -95,6 +99,85 @@ export const userAPI = {
 
   getUserById: (userId: string): Promise<User> =>
     apiClient.get(`/users/${userId}`).then((res) => res.data),
+};
+
+// ============== ADMIN ENDPOINTS ==============
+
+export const adminAPI = {
+  getSummary: (): Promise<AdminSummary> =>
+    apiClient.get('/admin/summary').then((res) => res.data),
+
+  getUsers: (search?: string): Promise<User[]> =>
+    apiClient.get('/admin/users', { params: { search } }).then((res) => res.data),
+
+  updateUser: (userId: string, userData: {
+    name?: string;
+    email?: string;
+    password?: string;
+    role?: string;
+    is_email_verified?: boolean;
+  }): Promise<User> => apiClient.patch(`/admin/users/${userId}`, userData).then((res) => res.data),
+
+  deleteUser: (userId: string): Promise<{ message: string }> =>
+    apiClient.delete(`/admin/users/${userId}`).then((res) => res.data),
+
+  getRegistrationEmails: (search?: string): Promise<RegistrationInvite[]> =>
+    apiClient.get('/admin/registration-emails', { params: { search } }).then((res) => res.data),
+
+  createRegistrationEmail: (data: {
+    email: string;
+    name_hint?: string;
+    role: string;
+    is_active?: boolean;
+  }): Promise<RegistrationInvite> =>
+    apiClient.post('/admin/registration-emails', data).then((res) => res.data),
+
+  updateRegistrationEmail: (
+    inviteId: string,
+    data: { name_hint?: string; role?: string; is_active?: boolean }
+  ): Promise<RegistrationInvite> =>
+    apiClient.patch(`/admin/registration-emails/${inviteId}`, data).then((res) => res.data),
+
+  deleteRegistrationEmail: (inviteId: string): Promise<{ message: string }> =>
+    apiClient.delete(`/admin/registration-emails/${inviteId}`).then((res) => res.data),
+
+  getDropdownOptions: (category?: string, search?: string, activeOnly?: boolean): Promise<DropdownOption[]> =>
+    apiClient
+      .get('/admin/dropdown-options', { params: { category, search, active_only: activeOnly } })
+      .then((res) => res.data),
+
+  createDropdownOption: (data: {
+    category: string;
+    value: string;
+    label?: string;
+    is_active?: boolean;
+    sort_order?: number;
+  }): Promise<DropdownOption> =>
+    apiClient.post('/admin/dropdown-options', data).then((res) => res.data),
+
+  updateDropdownOption: (
+    optionId: string,
+    data: { value?: string; label?: string; is_active?: boolean; sort_order?: number }
+  ): Promise<DropdownOption> =>
+    apiClient.patch(`/admin/dropdown-options/${optionId}`, data).then((res) => res.data),
+
+  deleteDropdownOption: (optionId: string): Promise<{ message: string }> =>
+    apiClient.delete(`/admin/dropdown-options/${optionId}`).then((res) => res.data),
+
+  getReferenceElements: (search?: string): Promise<RequisitionElementOption[]> =>
+    apiClient.get('/admin/reference-elements', { params: { search } }).then((res) => res.data),
+
+  createReferenceElement: (data: Omit<RequisitionElementOption, 'id'>): Promise<RequisitionElementOption> =>
+    apiClient.post('/admin/reference-elements', data).then((res) => res.data),
+
+  updateReferenceElement: (
+    elementId: number,
+    data: Partial<Omit<RequisitionElementOption, 'id'>>
+  ): Promise<RequisitionElementOption> =>
+    apiClient.patch(`/admin/reference-elements/${elementId}`, data).then((res) => res.data),
+
+  deleteReferenceElement: (elementId: number): Promise<{ message: string }> =>
+    apiClient.delete(`/admin/reference-elements/${elementId}`).then((res) => res.data),
 };
 
 // ============== REQUISITION ENDPOINTS ==============
@@ -188,6 +271,11 @@ export const hierarchyAPI = {
     apiClient
       .get('/requisitions/meta/filter-options', { params: { field } })
       .then((res) => res.data),
+
+  getDropdownOptions: (category: string): Promise<string[]> =>
+    apiClient
+      .get('/requisitions/meta/dropdown-options', { params: { category } })
+      .then((res) => res.data),
 };
 
 // ============== PRODUCTION/DISPATCH ENDPOINTS ==============
@@ -235,6 +323,10 @@ export const productionAPI = {
     receipt_location?: string;
     receipt_structure_name?: string;
     receipt_structure_id?: string;
+    remaining_disposition?: string;
+    secondary_receipt_location?: string;
+    secondary_receipt_structure_name?: string;
+    secondary_receipt_structure_id?: string;
     remarks?: string;
   }): Promise<ProductionDispatch> =>
     apiClient

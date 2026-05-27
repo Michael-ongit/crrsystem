@@ -12,7 +12,7 @@ import RequisitionFilters, {
   RequisitionFilterState,
 } from '../components/RequisitionFilters';
 import RequisitionFullDetails from '../components/RequisitionFullDetails';
-import { getRemainingQty, isDispatchFullyAllocated } from '../dispatchUtils';
+import { getVehicleRemainingQty, isDispatchFullyAllocated } from '../dispatchUtils';
 import {
   combineISTDateTimeForApi,
   dateTimeLocalInputToApi,
@@ -264,7 +264,7 @@ const ProductionView: React.FC = () => {
       ['Date', formatOrderDate(requisition)],
       ['Supply ID', dispatch.supply_id],
       ['Location', requisition.location],
-      ['In-Charge', userNames[requisition.in_charge_id] || requisition.in_charge_id],
+      ['In-Charge', requisition.selected_in_charge || requisition.in_charge_name || userNames[requisition.in_charge_id] || requisition.in_charge_id],
       ['Engineer', requisition.contact_person],
       ['Structure Name', requisition.structure_name],
       ['Structure ID', requisition.structure_id],
@@ -273,7 +273,7 @@ const ProductionView: React.FC = () => {
       ['Batching Plant ID', dispatch.batching_plant_id],
       ['Vehicle Number', dispatch.tm_number],
       ['Quantity Dispatched', dispatch.actual_dispatched_qty],
-      ['Remaining in Vehicle', getRemainingQty(dispatch)],
+      ['Remaining in Vehicle', getVehicleRemainingQty(dispatch)],
       ['Dispatch Time', formatDateTimeIST(dispatch.dispatch_time)],
       ['Receipt at Site', formatDateTimeIST(dispatch.receipt_at_site_time)],
       ['Release from Site', formatDateTimeIST(dispatch.release_from_site_time)],
@@ -804,7 +804,7 @@ const ProductionView: React.FC = () => {
                       ['Date', formatOrderDate(selectedRequisition)],
                       ['Supply ID', selectedRequisition.supply_id],
                       ['Location', selectedRequisition.location],
-                      ['In-Charge', userNames[selectedRequisition.in_charge_id] || selectedRequisition.in_charge_id],
+                      ['In-Charge', selectedRequisition.selected_in_charge || selectedRequisition.in_charge_name || userNames[selectedRequisition.in_charge_id] || selectedRequisition.in_charge_id],
                       ['Engineer', selectedRequisition.contact_person],
                       ['Structure Name', selectedRequisition.structure_name],
                       ['Structure ID', selectedRequisition.structure_id],

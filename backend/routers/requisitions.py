@@ -4,7 +4,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from database import get_db
 from models import (
-    ConcreteRequisition, PlanningValidation, RequisitionElement,
+    ConcreteRequisition, DropdownOption, PlanningValidation, RequisitionElement,
     RequisitionStatus, SupplySequence, User, UserRole
 )
 from . import auth
@@ -58,6 +58,8 @@ def _apply_requisition_payload(
     db_requisition.requisition_date = requisition.requisition_date
     db_requisition.location = requisition.location
     db_requisition.in_charge_id = requisition.in_charge_id
+    db_requisition.in_charge_name = requisition.in_charge_name
+    db_requisition.selected_in_charge = requisition.selected_in_charge
     db_requisition.structure_type = requisition.structure_type
     db_requisition.structure_name = requisition.structure_name
     db_requisition.structure_id = requisition.structure_id
@@ -305,6 +307,28 @@ def get_requisition_filter_options(
             detail="Unsupported filter option field"
         )
     return _distinct_strings(db.query(columns[field]))
+
+
+@router.get(
+    "/meta/dropdown-options",
+    response_model=list[str],
+    summary="List active admin-managed dropdown options",
+)
+def get_dropdown_options(
+    category: str,
+    db: Session = Depends(get_db),
+) -> list[str]:
+    """Return active dropdown values maintained from the Admin page."""
+    values = (
+        db.query(DropdownOption.value)
+        .filter(
+            DropdownOption.category == category,
+            DropdownOption.is_active.is_(True),
+        )
+        .order_by(DropdownOption.sort_order.asc(), DropdownOption.value.asc())
+        .all()
+    )
+    return [value for (value,) in values if value]
 
 
 @router.post(

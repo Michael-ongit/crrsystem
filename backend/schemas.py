@@ -46,6 +46,30 @@ class UserCreate(BaseModel):
         return v
 
 
+class UserUpdate(BaseModel):
+    """Schema for admin edits to a system user"""
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    email: Optional[str] = Field(None, min_length=5, max_length=255)
+    password: Optional[str] = Field(None, min_length=8, max_length=128)
+    role: Optional[UserRole] = None
+    is_email_verified: Optional[bool] = None
+
+    @field_validator('name')
+    @classmethod
+    def normalize_optional_name(cls, v: Optional[str]) -> Optional[str]:
+        return v.strip() if v is not None else v
+
+    @field_validator('email')
+    @classmethod
+    def validate_optional_email(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        v = v.strip().lower()
+        if '@' not in v or '.' not in v:
+            raise ValueError('Invalid email format')
+        return v
+
+
 class UserResponse(BaseModel):
     """Schema for user response"""
     id: str
@@ -59,6 +83,110 @@ class UserResponse(BaseModel):
         from_attributes = True
 
 
+class RegistrationInviteCreate(BaseModel):
+    """Admin-created registration permission for one email address."""
+    email: str = Field(..., min_length=5, max_length=255)
+    name_hint: Optional[str] = Field(None, max_length=255)
+    role: UserRole = Field(default=UserRole.EXECUTION)
+    is_active: bool = True
+
+    @field_validator('email')
+    @classmethod
+    def normalize_invite_email(cls, v: str) -> str:
+        v = v.strip().lower()
+        if '@' not in v or '.' not in v:
+            raise ValueError('Invalid email format')
+        return v
+
+
+class RegistrationInviteUpdate(BaseModel):
+    name_hint: Optional[str] = Field(None, max_length=255)
+    role: Optional[UserRole] = None
+    is_active: Optional[bool] = None
+
+
+class RegistrationInviteResponse(BaseModel):
+    invite_id: str
+    email: str
+    name_hint: Optional[str] = None
+    role: UserRole
+    is_active: bool
+    registered_user_id: Optional[str] = None
+    registered_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class DropdownOptionCreate(BaseModel):
+    category: str = Field(..., min_length=1, max_length=100)
+    value: str = Field(..., min_length=1, max_length=255)
+    label: Optional[str] = Field(None, max_length=255)
+    is_active: bool = True
+    sort_order: int = 0
+
+    @field_validator('category', 'value', 'label')
+    @classmethod
+    def normalize_dropdown_text(cls, v: Optional[str]) -> Optional[str]:
+        return v.strip() if isinstance(v, str) else v
+
+
+class DropdownOptionUpdate(BaseModel):
+    value: Optional[str] = Field(None, min_length=1, max_length=255)
+    label: Optional[str] = Field(None, max_length=255)
+    is_active: Optional[bool] = None
+    sort_order: Optional[int] = None
+
+    @field_validator('value', 'label')
+    @classmethod
+    def normalize_optional_dropdown_text(cls, v: Optional[str]) -> Optional[str]:
+        return v.strip() if isinstance(v, str) else v
+
+
+class DropdownOptionResponse(BaseModel):
+    option_id: str
+    category: str
+    value: str
+    label: Optional[str] = None
+    is_active: bool
+    sort_order: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class RequisitionElementCreate(BaseModel):
+    location: str = Field(..., min_length=1, max_length=100)
+    structure_type: str = Field(..., min_length=1, max_length=100)
+    structure_name: str = Field(..., min_length=1, max_length=100)
+    structure_id: str = Field(..., min_length=1, max_length=100)
+    element_id: Optional[str] = Field(None, max_length=100)
+
+
+class RequisitionElementUpdate(BaseModel):
+    location: Optional[str] = Field(None, min_length=1, max_length=100)
+    structure_type: Optional[str] = Field(None, min_length=1, max_length=100)
+    structure_name: Optional[str] = Field(None, min_length=1, max_length=100)
+    structure_id: Optional[str] = Field(None, min_length=1, max_length=100)
+    element_id: Optional[str] = Field(None, max_length=100)
+
+
+class RequisitionElementResponse(BaseModel):
+    id: int
+    location: str
+    structure_type: str
+    structure_name: str
+    structure_id: str
+    element_id: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
 # ============== CONCRETE REQUISITION SCHEMAS ==============
 
 class ConcreteRequisitionCreate(BaseModel):
@@ -67,6 +195,8 @@ class ConcreteRequisitionCreate(BaseModel):
     requisition_date: Optional[str] = Field(None, max_length=20)
     location: str = Field(..., min_length=3, max_length=500)
     in_charge_id: str = Field(..., description="UUID of the responsible person")
+    in_charge_name: Optional[str] = Field(None, max_length=255)
+    selected_in_charge: Optional[str] = Field(None, max_length=255)
     structure_type: Optional[str] = Field(None, max_length=100)
     structure_name: str = Field(..., min_length=1, max_length=255)
     structure_id: str = Field(..., min_length=1, max_length=50)
@@ -115,6 +245,8 @@ class ConcreteRequisitionResponse(BaseModel):
     requisition_date: Optional[str] = None
     location: str
     in_charge_id: str
+    in_charge_name: Optional[str] = None
+    selected_in_charge: Optional[str] = None
     structure_type: Optional[str] = None
     structure_name: str
     structure_id: str
@@ -231,6 +363,8 @@ class ProductionDispatchResponse(BaseModel):
     return_to_plant_time: Optional[datetime] = None
     remarks: Optional[str] = None
     wastage_qty: Optional[float]
+    returned_wastage_qty: float = 0.0
+    remaining_concrete_disposition: Optional[str] = None
     receipt_allocations: List[DispatchReceiptAllocationResponse] = Field(default_factory=list)
     allocated_qty: float = 0.0
     remaining_qty: float = 0.0
@@ -314,6 +448,10 @@ class DispatchAcknowledgementUpdate(BaseModel):
     receipt_location: Optional[str] = Field(None, max_length=500)
     receipt_structure_name: Optional[str] = Field(None, max_length=255)
     receipt_structure_id: Optional[str] = Field(None, max_length=50)
+    remaining_disposition: Optional[str] = Field(None, max_length=50)
+    secondary_receipt_location: Optional[str] = Field(None, max_length=500)
+    secondary_receipt_structure_name: Optional[str] = Field(None, max_length=255)
+    secondary_receipt_structure_id: Optional[str] = Field(None, max_length=50)
     remarks: Optional[str] = Field(None, max_length=2000)
 
     @model_validator(mode="after")

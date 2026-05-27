@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from config import settings
 from database import get_db
-from models import AuthSession, User, UserRole
+from models import AuthSession, RegistrationInvite, User, UserRole
 from schemas import (
     AuthResponse,
     LoginRequest,
@@ -110,6 +110,13 @@ def require_roles(*roles: UserRole):
 )
 def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
     try:
+        invite = db.query(RegistrationInvite).filter(RegistrationInvite.email == payload.email).first()
+        if not invite or not invite.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This email is not approved for registration. Please contact an administrator.",
+            )
+
         existing_user = db.query(User).filter(User.email == payload.email).first()
         if existing_user:
             raise HTTPException(
@@ -120,12 +127,15 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
         user = User(
             name=payload.name,
             email=payload.email,
-            role=UserRole(payload.role.value),
+            role=UserRole(invite.role.value),
             password_hash=hash_password(payload.password),
             is_email_verified=True,
         )
 
         db.add(user)
+        db.flush()
+        invite.registered_user_id = user.id
+        invite.registered_at = now_ist()
         db.commit()
         db.refresh(user)
 

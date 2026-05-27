@@ -11,7 +11,7 @@ import RequisitionFilters, {
   RequisitionFilterState,
 } from '../components/RequisitionFilters';
 import RequisitionFullDetails from '../components/RequisitionFullDetails';
-import { getAllocatedQty, getRemainingQty, isDispatchFullyAllocated } from '../dispatchUtils';
+import { getAllocatedQty, getRemainingQty, getVehicleRemainingQty, isDispatchFullyAllocated } from '../dispatchUtils';
 import {
   combineISTDateTimeForApi,
   formatDateTimeIST,
@@ -24,9 +24,13 @@ import { ConcreteRequisition, ProductionDispatch, RequisitionStatus } from '../t
 interface ReconciliationFormData {
   details_match: boolean;
   deposited_qty?: number;
+  remaining_disposition: '' | 'Secondary Location' | 'Back to Plant';
   receipt_location: string;
   receipt_structure_name: string;
   receipt_structure_id: string;
+  secondary_receipt_location: string;
+  secondary_receipt_structure_name: string;
+  secondary_receipt_structure_id: string;
   receipt_at_site_date: string;
   receipt_at_site_time: string;
   release_from_site_date: string;
@@ -88,6 +92,8 @@ const DispatchSummaryView: React.FC = () => {
 
   const draftStorageKey = 'dispatchReconciliationDrafts';
   const detailsMatch = watch('details_match');
+  const depositedQty = watch('deposited_qty');
+  const remainingDisposition = watch('remaining_disposition');
 
   const readDrafts = (): Record<string, ReconciliationFormData> => {
     const rawDrafts = localStorage.getItem(draftStorageKey);
@@ -172,9 +178,13 @@ const DispatchSummaryView: React.FC = () => {
     reset({
       details_match: draft?.details_match ?? true,
       deposited_qty: draft?.deposited_qty ?? getRemainingQty(dispatch),
+      remaining_disposition: draft?.remaining_disposition || '',
       receipt_location: draft?.receipt_location || dispatch.receipt_location || requisition?.location || '',
       receipt_structure_name: draft?.receipt_structure_name || requisition?.structure_name || '',
       receipt_structure_id: draft?.receipt_structure_id || requisition?.structure_id || '',
+      secondary_receipt_location: draft?.secondary_receipt_location || '',
+      secondary_receipt_structure_name: draft?.secondary_receipt_structure_name || '',
+      secondary_receipt_structure_id: draft?.secondary_receipt_structure_id || '',
       receipt_at_site_date: draft?.receipt_at_site_date || (
         dispatch.receipt_at_site_time ? toDateInputIST(dispatch.receipt_at_site_time) : today()
       ),
@@ -201,6 +211,11 @@ const DispatchSummaryView: React.FC = () => {
   };
 
   const selectDispatch = (dispatch: ProductionDispatch) => {
+    if (selectedDispatch && !selectedDispatchAcknowledged) {
+      const drafts = readDrafts();
+      drafts[selectedDispatch.dispatch_id] = getValues();
+      writeDrafts(drafts);
+    }
     setSelectedDispatchId(dispatch.dispatch_id);
     resetAcknowledgementForm(dispatch, selectedOrder);
   };
@@ -242,6 +257,16 @@ const DispatchSummaryView: React.FC = () => {
         receipt_location: data.details_match ? undefined : data.receipt_location,
         receipt_structure_name: data.details_match ? undefined : data.receipt_structure_name,
         receipt_structure_id: data.details_match ? undefined : data.receipt_structure_id,
+        remaining_disposition: data.details_match ? undefined : data.remaining_disposition || undefined,
+        secondary_receipt_location: data.remaining_disposition === 'Secondary Location'
+          ? data.secondary_receipt_location
+          : undefined,
+        secondary_receipt_structure_name: data.remaining_disposition === 'Secondary Location'
+          ? data.secondary_receipt_structure_name
+          : undefined,
+        secondary_receipt_structure_id: data.remaining_disposition === 'Secondary Location'
+          ? data.secondary_receipt_structure_id
+          : undefined,
         remarks: data.remarks || undefined,
       });
       const drafts = readDrafts();
@@ -267,7 +292,7 @@ const DispatchSummaryView: React.FC = () => {
       ['Date', formatOrderDate(requisition)],
       ['Supply ID', dispatch.supply_id],
       ['Location', requisition.location],
-      ['In-Charge', userNames[requisition.in_charge_id] || requisition.in_charge_id],
+      ['In-Charge', requisition.selected_in_charge || requisition.in_charge_name || userNames[requisition.in_charge_id] || requisition.in_charge_id],
       ['Engineer', requisition.contact_person],
       ['Structure Name', requisition.structure_name],
       ['Structure ID', requisition.structure_id],
@@ -280,7 +305,7 @@ const DispatchSummaryView: React.FC = () => {
       ['Vehicle Number', dispatch.tm_number],
       ['Quantity Dispatched', dispatch.actual_dispatched_qty],
       ['Quantity Deposited', getAllocatedQty(dispatch)],
-      ['Remaining in Vehicle', getRemainingQty(dispatch)],
+      ['Remaining in Vehicle', getVehicleRemainingQty(dispatch)],
       ['Dispatch time', formatDateTimeIST(dispatch.dispatch_time)],
       ['Receipt Location', dispatch.receipt_location],
     ] as Array<[string, unknown]>;
@@ -298,16 +323,22 @@ const DispatchSummaryView: React.FC = () => {
   }, [allDispatches, selectedOrder]);
 
   const selectedDispatchSummary = useMemo(() => {
-    const dispatchedQty = selectedDispatch?.actual_dispatched_qty || 0;
-    const arrivedQty = selectedDispatch ? getAllocatedQty(selectedDispatch) : 0;
+    const dispatches = selectedVehicleDispatches;
+    const dispatchedQty = dispatches.reduce((total, dispatch) => total + dispatch.actual_dispatched_qty, 0);
+    const arrivedQty = dispatches.reduce((total, dispatch) => total + getAllocatedQty(dispatch), 0);
     return {
       dispatchedQty,
       arrivedQty,
-      remainingQty: selectedDispatch ? getRemainingQty(selectedDispatch) : 0,
+      remainingQty: dispatches.reduce((total, dispatch) => total + getVehicleRemainingQty(dispatch), 0),
     };
-  }, [selectedDispatch]);
+  }, [selectedVehicleDispatches]);
 
   const selectedDispatchAcknowledged = Boolean(selectedDispatch && isDispatchFullyAllocated(selectedDispatch));
+  const selectedVehicleRemaining = selectedDispatch ? getRemainingQty(selectedDispatch) : 0;
+  const remainingAfterDeposit = !detailsMatch
+    ? Math.max(0, selectedVehicleRemaining - Number(depositedQty || 0))
+    : 0;
+  const needsRemainingRoute = remainingAfterDeposit > 0.0001;
 
   useEffect(() => {
     if (!selectedDispatch || selectedDispatchAcknowledged) return undefined;
@@ -480,8 +511,8 @@ const DispatchSummaryView: React.FC = () => {
                     </dd>
                   </div>
                   <div className="rounded-md bg-white px-3 py-2 shadow-sm">
-                    <dt className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Remaining Qty</dt>
-                    <dd className="mt-1 text-lg font-bold text-gray-900">
+                    <dt className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Remaining in Vehicles</dt>
+                    <dd className="mt-1 text-lg font-bold text-amber-700">
                       {selectedDispatchSummary.remainingQty.toFixed(2)} cum
                     </dd>
                   </div>
@@ -645,6 +676,90 @@ const DispatchSummaryView: React.FC = () => {
                               <p className="mt-1 text-xs text-red-600">{errors.deposited_qty.message}</p>
                             )}
                           </div>
+
+                          {needsRemainingRoute && (
+                            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 lg:col-span-2">
+                              <p className="mb-3 text-sm font-semibold text-amber-900">
+                                Remaining concrete to account: {remainingAfterDeposit.toFixed(2)} cum
+                              </p>
+                              <div className="grid gap-3 sm:grid-cols-2">
+                                <label className="flex items-center gap-3 rounded-md border border-amber-200 bg-white px-3 py-2">
+                                  <input
+                                    type="radio"
+                                    value="Secondary Location"
+                                    className="h-4 w-4 border-gray-300 text-[#003F72] focus:ring-[#003F72]"
+                                    {...register('remaining_disposition', {
+                                      required: needsRemainingRoute ? 'Choose where the remaining concrete went' : false,
+                                    })}
+                                  />
+                                  <span className="text-sm font-semibold text-gray-700">Secondary Location</span>
+                                </label>
+                                <label className="flex items-center gap-3 rounded-md border border-amber-200 bg-white px-3 py-2">
+                                  <input
+                                    type="radio"
+                                    value="Back to Plant"
+                                    className="h-4 w-4 border-gray-300 text-[#003F72] focus:ring-[#003F72]"
+                                    {...register('remaining_disposition', {
+                                      required: needsRemainingRoute ? 'Choose where the remaining concrete went' : false,
+                                    })}
+                                  />
+                                  <span className="text-sm font-semibold text-gray-700">Back to Plant</span>
+                                </label>
+                              </div>
+                              {errors.remaining_disposition && (
+                                <p className="mt-2 text-xs text-red-600">{errors.remaining_disposition.message}</p>
+                              )}
+                            </div>
+                          )}
+
+                          {needsRemainingRoute && remainingDisposition === 'Secondary Location' && (
+                            <>
+                              <div>
+                                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
+                                  Secondary Receipt Location
+                                </label>
+                                <input
+                                  className={fieldClass}
+                                  {...register('secondary_receipt_location', {
+                                    required: 'Secondary receipt location is required',
+                                  })}
+                                />
+                                {errors.secondary_receipt_location && (
+                                  <p className="mt-1 text-xs text-red-600">{errors.secondary_receipt_location.message}</p>
+                                )}
+                              </div>
+
+                              <div>
+                                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
+                                  Secondary Structure Name
+                                </label>
+                                <input
+                                  className={fieldClass}
+                                  {...register('secondary_receipt_structure_name', {
+                                    required: 'Secondary structure name is required',
+                                  })}
+                                />
+                                {errors.secondary_receipt_structure_name && (
+                                  <p className="mt-1 text-xs text-red-600">{errors.secondary_receipt_structure_name.message}</p>
+                                )}
+                              </div>
+
+                              <div>
+                                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
+                                  Secondary Structure ID
+                                </label>
+                                <input
+                                  className={fieldClass}
+                                  {...register('secondary_receipt_structure_id', {
+                                    required: 'Secondary structure ID is required',
+                                  })}
+                                />
+                                {errors.secondary_receipt_structure_id && (
+                                  <p className="mt-1 text-xs text-red-600">{errors.secondary_receipt_structure_id.message}</p>
+                                )}
+                              </div>
+                            </>
+                          )}
                         </>
                       )}
 

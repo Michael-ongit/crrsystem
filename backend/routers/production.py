@@ -32,8 +32,13 @@ def _allocation_total(dispatch: ProductionDispatch) -> float:
 
 def _attach_dispatch_quantities(dispatch: ProductionDispatch) -> ProductionDispatch:
     allocated_qty = _allocation_total(dispatch)
+    returned_wastage_qty = round(float(dispatch.returned_wastage_qty or 0), 2)
     dispatch.allocated_qty = allocated_qty
-    dispatch.remaining_qty = round(max(0.0, dispatch.actual_dispatched_qty - allocated_qty), 2)
+    dispatch.returned_wastage_qty = returned_wastage_qty
+    dispatch.remaining_qty = round(
+        max(0.0, dispatch.actual_dispatched_qty - allocated_qty - returned_wastage_qty),
+        2,
+    )
     return dispatch
 
 
@@ -395,6 +400,30 @@ def acknowledge_dispatch(
                 )
             )
 
+        remaining_after_deposit = round(max(0.0, remaining_qty - deposited_qty), 2)
+        disposition = (acknowledgement.remaining_disposition or "").strip()
+
+        if remaining_after_deposit > QUANTITY_EPSILON:
+            if disposition not in ["Secondary Location", "Back to Plant"]:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Choose Secondary Location or Back to Plant for the remaining concrete"
+                )
+
+            if disposition == "Secondary Location":
+                missing_secondary_fields = []
+                if not acknowledgement.secondary_receipt_location or not acknowledgement.secondary_receipt_location.strip():
+                    missing_secondary_fields.append("secondary_receipt_location")
+                if not acknowledgement.secondary_receipt_structure_name or not acknowledgement.secondary_receipt_structure_name.strip():
+                    missing_secondary_fields.append("secondary_receipt_structure_name")
+                if not acknowledgement.secondary_receipt_structure_id or not acknowledgement.secondary_receipt_structure_id.strip():
+                    missing_secondary_fields.append("secondary_receipt_structure_id")
+                if missing_secondary_fields:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Secondary location requires: " + ", ".join(missing_secondary_fields)
+                    )
+
         allocation = DispatchReceiptAllocation(
             dispatch=dispatch,
             deposited_qty=round(deposited_qty, 2),
@@ -407,6 +436,26 @@ def acknowledge_dispatch(
         )
 
         db.add(allocation)
+        if remaining_after_deposit > QUANTITY_EPSILON and disposition == "Secondary Location":
+            secondary_allocation = DispatchReceiptAllocation(
+                dispatch=dispatch,
+                deposited_qty=remaining_after_deposit,
+                receipt_location=(acknowledgement.secondary_receipt_location or "").strip(),
+                receipt_structure_name=(acknowledgement.secondary_receipt_structure_name or "").strip(),
+                receipt_structure_id=(acknowledgement.secondary_receipt_structure_id or "").strip(),
+                receipt_at_site_time=to_ist_naive(acknowledgement.receipt_at_site_time),
+                release_from_site_time=to_ist_naive(acknowledgement.release_from_site_time),
+                remarks=acknowledgement.remarks,
+            )
+            db.add(secondary_allocation)
+            dispatch.remaining_concrete_disposition = "Secondary Location"
+        elif remaining_after_deposit > QUANTITY_EPSILON and disposition == "Back to Plant":
+            dispatch.returned_wastage_qty = round(
+                float(dispatch.returned_wastage_qty or 0) + remaining_after_deposit,
+                2,
+            )
+            dispatch.remaining_concrete_disposition = "Back to Plant"
+
         db.flush()
         db.refresh(dispatch)
 

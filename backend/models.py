@@ -74,6 +74,39 @@ class AuthSession(Base):
     user = relationship("User", back_populates="sessions")
 
 
+class RegistrationInvite(Base):
+    """Admin-approved email address that may self-register with an assigned role."""
+    __tablename__ = "registration_invites"
+
+    invite_id = Column(UUID_COLUMN, primary_key=True, default=lambda: str(uuid.uuid4()))
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    name_hint = Column(String(255), nullable=True)
+    role = Column(
+        Enum(UserRole, values_callable=enum_values, native_enum=False),
+        nullable=False,
+        default=UserRole.EXECUTION,
+    )
+    is_active = Column(Boolean, nullable=False, default=True)
+    registered_user_id = Column(UUID_COLUMN, ForeignKey("users.id"), nullable=True)
+    registered_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=now_ist)
+    updated_at = Column(DateTime, nullable=False, default=now_ist, onupdate=now_ist)
+
+
+class DropdownOption(Base):
+    """Admin-managed option list for user-facing dropdown fields."""
+    __tablename__ = "dropdown_options"
+
+    option_id = Column(UUID_COLUMN, primary_key=True, default=lambda: str(uuid.uuid4()))
+    category = Column(String(100), nullable=False, index=True)
+    value = Column(String(255), nullable=False)
+    label = Column(String(255), nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, nullable=False, default=now_ist)
+    updated_at = Column(DateTime, nullable=False, default=now_ist, onupdate=now_ist)
+
+
 class RequisitionElement(Base):
     """
     Master reference row for concrete requisition structural hierarchy.
@@ -136,6 +169,8 @@ class ConcreteRequisition(Base):
     req_date = Column(DateTime, nullable=False, default=now_ist)
     location = Column(String(500), nullable=False)
     in_charge_id = Column(UUID_COLUMN, ForeignKey("users.id"), nullable=False)
+    in_charge_name = Column(String(255), nullable=True)
+    selected_in_charge = Column(String(255), nullable=True)
     structure_name = Column(String(255), nullable=False)
     structure_id = Column(String(50), nullable=False, index=True)
     rfi_no = Column(String(100), nullable=True)
@@ -219,6 +254,8 @@ class ProductionDispatch(Base):
     return_to_plant_time = Column(DateTime, nullable=True)
     remarks = Column(String(2000), nullable=True)
     wastage_qty = Column(Float, nullable=True)  # Calculated: requested_qty - actual_dispatched_qty
+    returned_wastage_qty = Column(Float, nullable=False, default=0)
+    remaining_concrete_disposition = Column(String(50), nullable=True)
     created_at = Column(DateTime, nullable=False, default=now_ist)
     updated_at = Column(DateTime, nullable=False, default=now_ist, onupdate=now_ist)
     

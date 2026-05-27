@@ -14,10 +14,13 @@ export const getAllocatedQty = (dispatch: ProductionDispatch): number => {
 };
 
 export const getRemainingQty = (dispatch: ProductionDispatch): number =>
-  Math.max(0, dispatch.actual_dispatched_qty - getAllocatedQty(dispatch));
+  Math.max(0, dispatch.actual_dispatched_qty - getAllocatedQty(dispatch) - (dispatch.returned_wastage_qty || 0));
 
 export const isDispatchFullyAllocated = (dispatch: ProductionDispatch): boolean =>
   getRemainingQty(dispatch) <= EPSILON;
+
+export const getVehicleRemainingQty = (dispatch: ProductionDispatch): number =>
+  Math.max(0, dispatch.actual_dispatched_qty - getAllocatedQty(dispatch));
 
 export const formatAllocationDestinations = (dispatch: ProductionDispatch): string => {
   const allocations = dispatch.receipt_allocations || [];

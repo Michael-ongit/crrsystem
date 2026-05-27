@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import Select from 'react-select';
-import { hierarchyAPI, requisitionAPI, userAPI } from '../api';
+import { hierarchyAPI, requisitionAPI } from '../api';
 import CollapsibleTableSection from '../components/CollapsibleTableSection';
 import PastRequisitionsModalButton from '../components/PastRequisitionsModalButton';
 import PastRequisitionsTable from '../components/PastRequisitionsTable';
@@ -49,6 +49,8 @@ interface ExecutionFormData {
   pour_time: string;
   placement_by: string;
   in_charge_id: string;
+  in_charge_name: string;
+  selected_in_charge: string;
   contact_person: string;
   contact_number: string;
 }
@@ -83,6 +85,8 @@ const defaultValues = (currentUser?: User | null): ExecutionFormData => ({
   pour_time: '',
   placement_by: '',
   in_charge_id: currentUser?.id || '',
+  in_charge_name: currentUser?.name || '',
+  selected_in_charge: currentUser?.name || '',
   contact_person: '',
   contact_number: '',
 });
@@ -99,7 +103,6 @@ const getErrorMessage = (error: any, fallback: string) => {
 const numberOrUndefined = (value?: number) =>
   typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 
-const gradeOptions = ['M-10', 'M-20', 'M-25', 'M-30', 'M-45', 'M-45P', 'M-50', 'M-55', 'M-60'];
 type SelectOption = { value: string; label: string };
 const toOptions = (values: string[]): SelectOption[] => values.map((value) => ({ value, label: value }));
 
@@ -169,8 +172,9 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
     defaultValues: defaultValues(currentUser),
   });
 
-  const [users, setUsers] = useState<User[]>([]);
   const [locationOptions, setLocationOptions] = useState<SelectOption[]>([]);
+  const [gradeOptions, setGradeOptions] = useState<SelectOption[]>([]);
+  const [placementOptions, setPlacementOptions] = useState<SelectOption[]>([]);
   const [structureTypeOptions, setStructureTypeOptions] = useState<SelectOption[]>([]);
   const [structureNameOptions, setStructureNameOptions] = useState<SelectOption[]>([]);
   const [structureIdOptions, setStructureIdOptions] = useState<SelectOption[]>([]);
@@ -197,12 +201,6 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
   const structureIdValue = watch('structure_id');
   const theoreticalQty = watch('theoretical_qty');
   const actualQty = watch('actual_qty');
-  const inChargeValue = watch('in_charge_id');
-
-  const selectedInChargeName = useMemo(() => {
-    return users.find((user) => user.id === inChargeValue)?.name || currentUser?.name || '';
-  }, [currentUser?.name, inChargeValue, users]);
-
   const currentOrders = useMemo(
     () => orders.filter((order) => order.status === RequisitionStatus.PENDING),
     [orders]
@@ -261,12 +259,14 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
   useEffect(() => {
     const fetchInitialData = async () => {
       try {
-        const [fetchedUsers, locations] = await Promise.all([
-          userAPI.getUsers(),
+        const [locations, grades, placements] = await Promise.all([
           hierarchyAPI.getLocations(),
+          hierarchyAPI.getDropdownOptions('concrete_grade'),
+          hierarchyAPI.getDropdownOptions('placement_by'),
         ]);
-        setUsers(fetchedUsers);
         setLocationOptions(toOptions(locations));
+        setGradeOptions(toOptions(grades));
+        setPlacementOptions(toOptions(placements));
         loadDrafts();
         await fetchOrders();
       } catch (error) {
@@ -443,6 +443,8 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
     pour_time: order.pour_time || '',
     placement_by: order.placement_by || '',
     in_charge_id: order.in_charge_id || currentUser?.id || '',
+    in_charge_name: order.in_charge_name || currentUser?.name || '',
+    selected_in_charge: order.selected_in_charge || order.in_charge_name || currentUser?.name || '',
     contact_person: order.contact_person || '',
     contact_number: order.contact_number || '',
   });
@@ -470,6 +472,7 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
 
   const buildPayload = (data: ExecutionFormData) => ({
     ...data,
+    in_charge_id: currentUser?.id || data.in_charge_id,
     drawing_length: numberOrUndefined(data.drawing_length),
     drawing_diameter: numberOrUndefined(data.drawing_diameter),
     theoretical_qty: numberOrUndefined(data.theoretical_qty),
@@ -827,8 +830,8 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
                   <select className={fieldClass} {...register('grade', { required: 'Grade is required' })}>
                     <option value=""></option>
                     {gradeOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
+                      <option key={option.value} value={option.value}>
+                        {option.label}
                       </option>
                     ))}
                   </select>
@@ -896,27 +899,32 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
                 </Field>
 
                 <Field label="Placement By">
-                  <input className={fieldClass} {...register('placement_by')} />
-                </Field>
-              </Section>
-
-              <Section title="Contact Details">
-                <Field label="In-charge Name" required error={errors.in_charge_id?.message}>
-                  <select
-                    className={fieldClass}
-                    {...register('in_charge_id', { required: 'Please select an in-charge person' })}
-                  >
+                  <select className={fieldClass} {...register('placement_by')}>
                     <option value=""></option>
-                    {users.map((user) => (
-                      <option key={user.id} value={user.id}>
-                        {user.name} ({user.email})
+                    {placementOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
                       </option>
                     ))}
                   </select>
                 </Field>
+              </Section>
 
-                <Field label="Selected In-charge">
-                  <input className={readOnlyClass} readOnly value={selectedInChargeName} />
+              <Section title="Contact Details">
+                <input type="hidden" {...register('in_charge_id')} />
+
+                <Field label="In-charge Name" required error={errors.in_charge_name?.message}>
+                  <input
+                    className={fieldClass}
+                    {...register('in_charge_name', { required: 'In-charge name is required' })}
+                  />
+                </Field>
+
+                <Field label="Selected In-charge" required error={errors.selected_in_charge?.message}>
+                  <input
+                    className={fieldClass}
+                    {...register('selected_in_charge', { required: 'Selected in-charge is required' })}
+                  />
                 </Field>
 
                 <Field label="Contact Person / Engineer">

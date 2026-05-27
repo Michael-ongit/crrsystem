@@ -50,6 +50,12 @@ const Layout: React.FC<LayoutProps> = ({
       allowedRoles: [UserRole.ADMIN],
       icon: 'DB',
     },
+    {
+      label: 'Admin',
+      path: '/admin',
+      allowedRoles: [UserRole.ADMIN],
+      icon: 'AD',
+    },
   ];
 
   const visibleNavItems = navItems.filter((item) =>
@@ -72,15 +78,16 @@ const Layout: React.FC<LayoutProps> = ({
           <button
             type="button"
             onClick={() => setIsCollapsed((value) => !value)}
-            className="group ml-auto flex h-10 w-10 items-center justify-center rounded-md border border-white/20 bg-white/10 text-white transition-all duration-200 ease-out hover:bg-white/20 hover:shadow-sm"
+            className={`group ml-auto flex h-10 items-center justify-center rounded-md border border-white/20 bg-white/10 text-white transition-all duration-200 ease-out hover:bg-white/20 hover:shadow-sm ${
+              isCollapsed ? 'w-10' : 'w-28 gap-2 px-3'
+            }`}
             aria-label={isCollapsed ? 'Expand side panel' : 'Collapse side panel'}
             title={isCollapsed ? 'Expand side panel' : 'Collapse side panel'}
           >
-            <span className="flex h-4 w-5 flex-col justify-between" aria-hidden="true">
-              <span className="h-0.5 rounded-full bg-current transition-transform duration-200 ease-out group-hover:translate-x-0.5" />
-              <span className="h-0.5 rounded-full bg-current transition-opacity duration-200 ease-out group-hover:opacity-80" />
-              <span className="h-0.5 rounded-full bg-current transition-transform duration-200 ease-out group-hover:-translate-x-0.5" />
+            <span className="flex h-5 w-5 items-center justify-center rounded bg-white/15 text-sm font-bold" aria-hidden="true">
+              {isCollapsed ? '>' : '<'}
             </span>
+            {!isCollapsed && <span className="text-xs font-semibold">Collapse</span>}
           </button>
         </div>
 

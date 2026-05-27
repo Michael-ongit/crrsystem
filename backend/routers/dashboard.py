@@ -19,6 +19,24 @@ router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 logger = logging.getLogger(__name__)
 
 
+def _site_deposited_qty(dispatches: list[ProductionDispatch]) -> float:
+    """Use acknowledged site deposits when present; fall back to dispatch quantity."""
+    total_deposited = 0.0
+    has_allocations = False
+    for dispatch in dispatches:
+        allocations = getattr(dispatch, "receipt_allocations", None) or []
+        if allocations:
+            has_allocations = True
+            total_deposited += sum(allocation.deposited_qty for allocation in allocations)
+        elif dispatch.receipt_at_site_time and dispatch.release_from_site_time:
+            has_allocations = True
+            total_deposited += dispatch.actual_dispatched_qty
+
+    if has_allocations:
+        return total_deposited
+    return sum(dispatch.actual_dispatched_qty for dispatch in dispatches)
+
+
 @router.get(
     "/summary",
     response_model=DashboardSummary,
@@ -78,7 +96,8 @@ def get_dashboard_summary(
             
             if dispatches:
                 total_dispatched = sum(d.actual_dispatched_qty for d in dispatches)
-                wastage = max(0, req.requested_qty - total_dispatched)
+                total_deposited = _site_deposited_qty(dispatches)
+                wastage = max(0, req.requested_qty - total_deposited)
                 wastage_pct = (wastage / req.requested_qty * 100) if req.requested_qty > 0 else 0
                 
                 exceeds_ace = wastage_pct > settings.ACE_LIMIT_PERCENT
@@ -187,7 +206,8 @@ def get_wastage_records(
             
             if dispatches:
                 total_dispatched = sum(d.actual_dispatched_qty for d in dispatches)
-                wastage = max(0, req.requested_qty - total_dispatched)
+                total_deposited = _site_deposited_qty(dispatches)
+                wastage = max(0, req.requested_qty - total_deposited)
                 wastage_pct = (wastage / req.requested_qty * 100) if req.requested_qty > 0 else 0
                 
                 exceeds_ace = wastage_pct > settings.ACE_LIMIT_PERCENT

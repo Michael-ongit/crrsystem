@@ -29,7 +29,6 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin }) => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState<UserRole>(UserRole.EXECUTION);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
@@ -40,7 +39,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin }) => {
 
     try {
       if (mode === 'register') {
-        await authAPI.register({ name, email, password, role });
+        await authAPI.register({ name, email, password, role: UserRole.EXECUTION });
         const result = await authAPI.login({ email, password });
         onLogin(result);
       } else {
@@ -65,7 +64,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin }) => {
             Concrete Requisition & Reconciliation System
           </h1>
           <p className="text-sm text-gray-600 mt-1">
-            {mode === 'login' ? 'Sign in with your email' : 'Create your development account'}
+            {mode === 'login' ? 'Sign in with your approved email' : 'Create your account from an approved email'}
           </p>
         </div>
 
@@ -139,23 +138,6 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin }) => {
               className="w-full px-3 py-2 border border-gray-300 rounded"
             />
           </div>
-
-          {mode === 'register' && (
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1">Role</label>
-              <select
-                value={role}
-                onChange={(event) => setRole(event.target.value as UserRole)}
-                className="w-full px-3 py-2 border border-gray-300 rounded"
-              >
-                {Object.values(UserRole).map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
 
           <button
             type="submit"

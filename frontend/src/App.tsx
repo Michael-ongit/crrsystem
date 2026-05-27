@@ -15,12 +15,13 @@ import ProductionView from './pages/ProductionView';
 import DispatchSummaryView from './pages/DispatchSummaryView';
 import ReconciliationDashboard from './pages/ReconciliationDashboard';
 import AuthPage from './pages/AuthPage';
+import AdminView from './pages/AdminView';
 
 const routeForRole = (role: UserRole) => {
   if (role === UserRole.EXECUTION) return '/execution';
   if (role === UserRole.PLANNING) return '/planning';
   if (role === UserRole.PRODUCTION) return '/production';
-  return '/dashboard';
+  return '/admin';
 };
 
 const resetAuthState = (): AuthState => ({
@@ -130,6 +131,9 @@ const App: React.FC = () => {
 
           {authState.currentRole === UserRole.ADMIN && (
             <Route path="/dashboard" element={<ReconciliationDashboard />} />
+          )}
+          {authState.currentRole === UserRole.ADMIN && (
+            <Route path="/admin" element={<AdminView />} />
           )}
           <Route path="/" element={<Navigate to={routeForRole(authState.currentRole)} replace />} />
           <Route path="*" element={<Navigate to={routeForRole(authState.currentRole)} replace />} />
