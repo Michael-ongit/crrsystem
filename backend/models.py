@@ -1,7 +1,8 @@
 # models.py - SQLAlchemy ORM models for MVDP System
-from sqlalchemy import Boolean, Column, String, DateTime, Float, Enum, ForeignKey, Index, Integer, func
+from sqlalchemy import Boolean, Column, String, DateTime, Float, Enum, ForeignKey, Index, Integer
 from sqlalchemy.orm import relationship
 from database import Base
+from time_utils import now_ist
 from enum import Enum as PyEnum
 import uuid
 
@@ -48,7 +49,7 @@ class User(Base):
     password_hash = Column(String(255), nullable=True)
     is_email_verified = Column(Boolean, nullable=False, default=False)
     last_login_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    created_at = Column(DateTime, nullable=False, default=now_ist)
     
     # Relationships
     requisitions = relationship("ConcreteRequisition", back_populates="in_charge")
@@ -67,7 +68,7 @@ class AuthSession(Base):
     user_id = Column(UUID_COLUMN, ForeignKey("users.id"), nullable=False, index=True)
     token_hash = Column(String(64), unique=True, nullable=False, index=True)
     expires_at = Column(DateTime, nullable=False)
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    created_at = Column(DateTime, nullable=False, default=now_ist)
     revoked_at = Column(DateTime, nullable=True)
 
     user = relationship("User", back_populates="sessions")
@@ -132,7 +133,7 @@ class ConcreteRequisition(Base):
     __tablename__ = "concrete_requisitions"
     
     supply_id = Column(String(50), primary_key=True, index=True)
-    req_date = Column(DateTime, nullable=False, server_default=func.now())
+    req_date = Column(DateTime, nullable=False, default=now_ist)
     location = Column(String(500), nullable=False)
     in_charge_id = Column(UUID_COLUMN, ForeignKey("users.id"), nullable=False)
     structure_name = Column(String(255), nullable=False)
@@ -161,8 +162,8 @@ class ConcreteRequisition(Base):
         nullable=False,
         default=RequisitionStatus.PENDING,
     )
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
-    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime, nullable=False, default=now_ist)
+    updated_at = Column(DateTime, nullable=False, default=now_ist, onupdate=now_ist)
     
     # Relationships
     in_charge = relationship("User", back_populates="requisitions")
@@ -185,7 +186,7 @@ class PlanningValidation(Base):
     supply_id = Column(String(50), ForeignKey("concrete_requisitions.supply_id"), nullable=False, index=True)
     validated_by = Column(UUID_COLUMN, ForeignKey("users.id"), nullable=False)
     planning_remarks = Column(String(2000), nullable=True)
-    validation_timestamp = Column(DateTime, nullable=False, server_default=func.now())
+    validation_timestamp = Column(DateTime, nullable=False, default=now_ist)
     is_approved = Column(String(10), nullable=False, default="Pending")  # Approved, Sent Back, Pending
     
     # Relationships
@@ -218,11 +219,16 @@ class ProductionDispatch(Base):
     return_to_plant_time = Column(DateTime, nullable=True)
     remarks = Column(String(2000), nullable=True)
     wastage_qty = Column(Float, nullable=True)  # Calculated: requested_qty - actual_dispatched_qty
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
-    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime, nullable=False, default=now_ist)
+    updated_at = Column(DateTime, nullable=False, default=now_ist, onupdate=now_ist)
     
     # Relationships
     requisition = relationship("ConcreteRequisition", back_populates="dispatch_logs")
+    receipt_allocations = relationship(
+        "DispatchReceiptAllocation",
+        back_populates="dispatch",
+        cascade="all, delete-orphan",
+    )
     
     def calculate_wastage(self, requested_qty: float) -> float:
         """Calculate wastage quantity"""
@@ -236,3 +242,34 @@ class ProductionDispatch(Base):
     
     def __repr__(self):
         return f"<ProductionDispatch(dispatch_id={self.dispatch_id}, tm_number={self.tm_number})>"
+
+
+class DispatchReceiptAllocation(Base):
+    """
+    Concrete deposited from a dispatched TM into one actual receipt destination.
+
+    A single plant dispatch can be allocated across multiple structures at site.
+    Keeping these rows separate preserves the original dispatched vehicle quantity
+    while recording where the concrete was actually used.
+    """
+    __tablename__ = "dispatch_receipt_allocations"
+
+    allocation_id = Column(UUID_COLUMN, primary_key=True, default=lambda: str(uuid.uuid4()))
+    dispatch_id = Column(UUID_COLUMN, ForeignKey("production_dispatch.dispatch_id"), nullable=False, index=True)
+    deposited_qty = Column(Float, nullable=False)
+    receipt_location = Column(String(500), nullable=False)
+    receipt_structure_name = Column(String(255), nullable=False)
+    receipt_structure_id = Column(String(50), nullable=False)
+    receipt_at_site_time = Column(DateTime, nullable=False)
+    release_from_site_time = Column(DateTime, nullable=False)
+    remarks = Column(String(2000), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=now_ist)
+    updated_at = Column(DateTime, nullable=False, default=now_ist, onupdate=now_ist)
+
+    dispatch = relationship("ProductionDispatch", back_populates="receipt_allocations")
+
+    def __repr__(self):
+        return (
+            "<DispatchReceiptAllocation("
+            f"dispatch_id={self.dispatch_id}, deposited_qty={self.deposited_qty})>"
+        )

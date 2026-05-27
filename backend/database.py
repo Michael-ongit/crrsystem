@@ -71,13 +71,14 @@ def init_db():
     Call this once during application startup.
     """
     Base.metadata.create_all(bind=engine)
-    if engine.dialect.name == "mssql":
-        migrate_user_auth_columns()
-        migrate_auth_session_columns()
+    migrate_user_auth_columns()
+    migrate_auth_session_columns()
     migrate_concrete_requisition_columns()
     migrate_production_dispatch_columns()
+    migrate_dispatch_receipt_allocations()
     seed_requisition_elements_if_empty()
     seed_supply_sequences_from_existing_requisitions()
+    seed_sample_data_if_empty()
     logger.info("Database tables initialized")
 
 
@@ -119,6 +120,29 @@ def seed_supply_sequences_from_existing_requisitions():
                 logger.info(f"Seeded {len(highest_by_base)} supply sequence rows from existing requisitions")
     except Exception as e:
         logger.warning(f"Supply sequence bootstrap skipped or failed: {e}")
+
+
+def seed_sample_data_if_empty():
+    """Populate a fresh development database with realistic workflow examples."""
+    if not settings.SEED_SAMPLE_DATA:
+        return
+
+    try:
+        from models import ConcreteRequisition
+        from seed import seed_sample_data
+
+        with SessionLocal() as db:
+            has_demo_orders = (
+                db.query(ConcreteRequisition.supply_id)
+                .filter(ConcreteRequisition.supply_id.like("MVDP-DEMO-%"))
+                .first()
+                is not None
+            )
+            if not has_demo_orders:
+                created = seed_sample_data(db=db)
+                logger.info(f"Seeded {created} sample requisitions")
+    except Exception as e:
+        logger.warning(f"Sample data seed skipped or failed: {e}")
 
 
 def migrate_concrete_requisition_columns():
@@ -189,69 +213,165 @@ def migrate_production_dispatch_columns():
                     ))
 
 
+def migrate_dispatch_receipt_allocations():
+    """Create receipt allocation rows for partial concrete deposits."""
+    with engine.begin() as conn:
+        if engine.dialect.name == "mssql":
+            conn.execute(text("""
+            IF OBJECT_ID('dispatch_receipt_allocations', 'U') IS NULL
+            CREATE TABLE dispatch_receipt_allocations (
+                allocation_id VARCHAR(36) NOT NULL PRIMARY KEY,
+                dispatch_id VARCHAR(36) NOT NULL,
+                deposited_qty FLOAT NOT NULL,
+                receipt_location VARCHAR(500) NOT NULL,
+                receipt_structure_name VARCHAR(255) NOT NULL,
+                receipt_structure_id VARCHAR(50) NOT NULL,
+                receipt_at_site_time DATETIME NOT NULL,
+                release_from_site_time DATETIME NOT NULL,
+                remarks VARCHAR(2000) NULL,
+                created_at DATETIME NOT NULL CONSTRAINT DF_dispatch_receipt_allocations_created_at DEFAULT GETDATE(),
+                updated_at DATETIME NOT NULL CONSTRAINT DF_dispatch_receipt_allocations_updated_at DEFAULT GETDATE(),
+                CONSTRAINT FK_dispatch_receipt_allocations_dispatch
+                    FOREIGN KEY (dispatch_id) REFERENCES production_dispatch(dispatch_id)
+            )
+            """))
+            conn.execute(text("""
+            IF NOT EXISTS (
+                SELECT 1 FROM sys.indexes
+                WHERE name = 'IX_dispatch_receipt_allocations_dispatch_id'
+                  AND object_id = OBJECT_ID('dispatch_receipt_allocations')
+            )
+            CREATE INDEX IX_dispatch_receipt_allocations_dispatch_id
+            ON dispatch_receipt_allocations(dispatch_id)
+            """))
+        elif engine.dialect.name == "sqlite":
+            conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS dispatch_receipt_allocations (
+                allocation_id VARCHAR(36) NOT NULL PRIMARY KEY,
+                dispatch_id VARCHAR(36) NOT NULL,
+                deposited_qty FLOAT NOT NULL,
+                receipt_location VARCHAR(500) NOT NULL,
+                receipt_structure_name VARCHAR(255) NOT NULL,
+                receipt_structure_id VARCHAR(50) NOT NULL,
+                receipt_at_site_time DATETIME NOT NULL,
+                release_from_site_time DATETIME NOT NULL,
+                remarks VARCHAR(2000),
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(dispatch_id) REFERENCES production_dispatch(dispatch_id)
+            )
+            """))
+            conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS IX_dispatch_receipt_allocations_dispatch_id
+            ON dispatch_receipt_allocations(dispatch_id)
+            """))
+
+
 def migrate_user_auth_columns():
     """Add auth columns to existing development databases."""
-    statements = [
-        """
-        IF COL_LENGTH('users', 'password_hash') IS NULL
-        ALTER TABLE users ADD password_hash VARCHAR(255) NULL
-        """,
-        """
-        IF COL_LENGTH('users', 'is_email_verified') IS NULL
-        ALTER TABLE users ADD is_email_verified BIT NOT NULL CONSTRAINT DF_users_is_email_verified DEFAULT 1
-        """,
-        """
-        IF COL_LENGTH('users', 'last_login_at') IS NULL
-        ALTER TABLE users ADD last_login_at DATETIME NULL
-        """,
-    ]
-
     with engine.begin() as conn:
-        for statement in statements:
-            conn.execute(text(statement))
+        if engine.dialect.name == "mssql":
+            statements = [
+                """
+                IF COL_LENGTH('users', 'password_hash') IS NULL
+                ALTER TABLE users ADD password_hash VARCHAR(255) NULL
+                """,
+                """
+                IF COL_LENGTH('users', 'is_email_verified') IS NULL
+                ALTER TABLE users ADD is_email_verified BIT NOT NULL CONSTRAINT DF_users_is_email_verified DEFAULT 1
+                """,
+                """
+                IF COL_LENGTH('users', 'last_login_at') IS NULL
+                ALTER TABLE users ADD last_login_at DATETIME NULL
+                """,
+            ]
+            for statement in statements:
+                conn.execute(text(statement))
+        elif engine.dialect.name == "sqlite":
+            existing_columns = {
+                row[1] for row in conn.execute(text("PRAGMA table_info(users)"))
+            }
+            sqlite_columns = [
+                ("password_hash", "VARCHAR(255)"),
+                ("is_email_verified", "BOOLEAN NOT NULL DEFAULT 1"),
+                ("last_login_at", "DATETIME"),
+            ]
+            for column_name, sqlite_type in sqlite_columns:
+                if column_name not in existing_columns:
+                    conn.execute(text(
+                        f"ALTER TABLE users ADD COLUMN {column_name} {sqlite_type}"
+                    ))
 
 
 def migrate_auth_session_columns():
     """Repair existing development auth_sessions tables created by older drafts."""
-    statements = [
-        """
-        IF OBJECT_ID('auth_sessions', 'U') IS NULL
-        CREATE TABLE auth_sessions (
-            session_id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
-            user_id UNIQUEIDENTIFIER NOT NULL,
-            token_hash VARCHAR(64) NOT NULL UNIQUE,
-            expires_at DATETIME NOT NULL,
-            created_at DATETIME NOT NULL CONSTRAINT DF_auth_sessions_created_at DEFAULT GETDATE(),
-            revoked_at DATETIME NULL,
-            CONSTRAINT FK_auth_sessions_users FOREIGN KEY (user_id) REFERENCES users(id)
-        )
-        """,
-        """
-        IF COL_LENGTH('auth_sessions', 'revoked_at') IS NULL
-        ALTER TABLE auth_sessions ADD revoked_at DATETIME NULL
-        """,
-        """
-        IF COL_LENGTH('auth_sessions', 'created_at') IS NULL
-        ALTER TABLE auth_sessions ADD created_at DATETIME NOT NULL CONSTRAINT DF_auth_sessions_created_at DEFAULT GETDATE()
-        """,
-        """
-        IF NOT EXISTS (
-            SELECT 1 FROM sys.indexes
-            WHERE name = 'IX_auth_sessions_token_hash'
-              AND object_id = OBJECT_ID('auth_sessions')
-        )
-        CREATE INDEX IX_auth_sessions_token_hash ON auth_sessions(token_hash)
-        """,
-        """
-        IF NOT EXISTS (
-            SELECT 1 FROM sys.indexes
-            WHERE name = 'IX_auth_sessions_user_id'
-              AND object_id = OBJECT_ID('auth_sessions')
-        )
-        CREATE INDEX IX_auth_sessions_user_id ON auth_sessions(user_id)
-        """,
-    ]
-
     with engine.begin() as conn:
-        for statement in statements:
-            conn.execute(text(statement))
+        if engine.dialect.name == "mssql":
+            statements = [
+                """
+                IF OBJECT_ID('auth_sessions', 'U') IS NULL
+                CREATE TABLE auth_sessions (
+                    session_id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
+                    user_id UNIQUEIDENTIFIER NOT NULL,
+                    token_hash VARCHAR(64) NOT NULL UNIQUE,
+                    expires_at DATETIME NOT NULL,
+                    created_at DATETIME NOT NULL CONSTRAINT DF_auth_sessions_created_at DEFAULT GETDATE(),
+                    revoked_at DATETIME NULL,
+                    CONSTRAINT FK_auth_sessions_users FOREIGN KEY (user_id) REFERENCES users(id)
+                )
+                """,
+                """
+                IF COL_LENGTH('auth_sessions', 'revoked_at') IS NULL
+                ALTER TABLE auth_sessions ADD revoked_at DATETIME NULL
+                """,
+                """
+                IF COL_LENGTH('auth_sessions', 'created_at') IS NULL
+                ALTER TABLE auth_sessions ADD created_at DATETIME NOT NULL CONSTRAINT DF_auth_sessions_created_at DEFAULT GETDATE()
+                """,
+                """
+                IF NOT EXISTS (
+                    SELECT 1 FROM sys.indexes
+                    WHERE name = 'IX_auth_sessions_token_hash'
+                      AND object_id = OBJECT_ID('auth_sessions')
+                )
+                CREATE INDEX IX_auth_sessions_token_hash ON auth_sessions(token_hash)
+                """,
+                """
+                IF NOT EXISTS (
+                    SELECT 1 FROM sys.indexes
+                    WHERE name = 'IX_auth_sessions_user_id'
+                      AND object_id = OBJECT_ID('auth_sessions')
+                )
+                CREATE INDEX IX_auth_sessions_user_id ON auth_sessions(user_id)
+                """,
+            ]
+            for statement in statements:
+                conn.execute(text(statement))
+        elif engine.dialect.name == "sqlite":
+            conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS auth_sessions (
+                session_id VARCHAR(36) NOT NULL PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                token_hash VARCHAR(64) NOT NULL UNIQUE,
+                expires_at DATETIME NOT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                revoked_at DATETIME,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            )
+            """))
+            existing_columns = {
+                row[1] for row in conn.execute(text("PRAGMA table_info(auth_sessions)"))
+            }
+            if "revoked_at" not in existing_columns:
+                conn.execute(text("ALTER TABLE auth_sessions ADD COLUMN revoked_at DATETIME"))
+            if "created_at" not in existing_columns:
+                conn.execute(text("ALTER TABLE auth_sessions ADD COLUMN created_at DATETIME"))
+                conn.execute(text("UPDATE auth_sessions SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"))
+            conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS IX_auth_sessions_token_hash
+            ON auth_sessions(token_hash)
+            """))
+            conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS IX_auth_sessions_user_id
+            ON auth_sessions(user_id)
+            """))

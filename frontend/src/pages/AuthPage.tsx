@@ -6,6 +6,24 @@ interface AuthPageProps {
   onLogin: (auth: AuthResponse) => void;
 }
 
+const getAuthErrorMessage = (error: any) => {
+  const detail = error.response?.data?.detail;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((item) => item?.msg || item?.message || String(item)).join(', ');
+  }
+  if (typeof error.response?.data === 'string' && error.response.data.trim()) {
+    return `Authentication request failed (${error.response.status}): ${error.response.data.slice(0, 180)}`;
+  }
+  if (error.response?.status) {
+    return `Authentication request failed with HTTP ${error.response.status}. Check the backend terminal for the exact error.`;
+  }
+  if (error.code === 'ERR_NETWORK' || !error.response) {
+    return 'Could not reach the backend API on the local machine at 127.0.0.1:8020. Restart the backend with python main.py, then refresh this page.';
+  }
+  return 'Authentication failed';
+};
+
 const AuthPage: React.FC<AuthPageProps> = ({ onLogin }) => {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [name, setName] = useState('');
@@ -22,9 +40,9 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin }) => {
 
     try {
       if (mode === 'register') {
-        const result = await authAPI.register({ name, email, password, role });
-        setMessage({ type: 'success', text: result.message });
-        setMode('login');
+        await authAPI.register({ name, email, password, role });
+        const result = await authAPI.login({ email, password });
+        onLogin(result);
       } else {
         const result = await authAPI.login({ email, password });
         onLogin(result);
@@ -32,7 +50,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin }) => {
     } catch (error: any) {
       setMessage({
         type: 'error',
-        text: error.response?.data?.detail || 'Authentication failed',
+        text: getAuthErrorMessage(error),
       });
     } finally {
       setLoading(false);

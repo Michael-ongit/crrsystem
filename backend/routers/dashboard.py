@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
-from datetime import datetime, timedelta
+from datetime import timedelta
 from database import get_db
 from models import (
     ConcreteRequisition, ProductionDispatch, RequisitionStatus, User, UserRole
@@ -12,6 +12,7 @@ from schemas import (
     DashboardSummary, WastageRecord, TurnaroundTimeRecord
 )
 from config import settings
+from time_utils import now_ist
 import logging
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
@@ -42,7 +43,7 @@ def get_dashboard_summary(
     """
     try:
         # Define date range
-        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        cutoff_date = now_ist() - timedelta(days=days)
         
         # Count requisitions by status
         total_requisitions = db.query(func.count(ConcreteRequisition.supply_id)).scalar() or 0
@@ -171,7 +172,7 @@ def get_wastage_records(
     - **exceeds_limit_only**: If True, return only records exceeding 1% ACE limit
     """
     try:
-        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        cutoff_date = now_ist() - timedelta(days=days)
         
         requisitions = db.query(ConcreteRequisition).filter(
             ConcreteRequisition.req_date >= cutoff_date
@@ -240,7 +241,7 @@ def get_turnaround_times(
     Turnaround = delivery_time - dispatch_time (in hours)
     """
     try:
-        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        cutoff_date = now_ist() - timedelta(days=days)
         
         dispatches = db.query(ProductionDispatch).filter(
             ProductionDispatch.dispatch_time >= cutoff_date

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import Select from 'react-select';
 import { hierarchyAPI } from '../api';
+import { formatDateIST, parseApiDateTime, toDateInputIST } from '../timeUtils';
 import { ConcreteRequisition } from '../types';
 
 export type DateRangeFilter = 'all' | '7' | '30' | '90' | '365' | 'custom';
@@ -15,6 +16,7 @@ export type RequisitionSearchField =
   | 'structure_id'
   | 'pile_lift_id'
   | 'grade'
+  | 'requested_qty'
   | 'status'
   | 'approval_status'
   | 'planning_remarks'
@@ -46,19 +48,20 @@ export const defaultRequisitionFilters: RequisitionFilterState = {
 
 export const formatOrderDate = (requisition: Pick<ConcreteRequisition, 'req_date' | 'requisition_date'>) => {
   if (requisition.requisition_date) return requisition.requisition_date;
-  return new Date(requisition.req_date).toLocaleDateString();
+  return formatDateIST(requisition.req_date);
 };
 
 const getOrderDate = (requisition: Pick<ConcreteRequisition, 'req_date' | 'requisition_date'>) => {
   const rawDate = requisition.requisition_date || requisition.req_date;
-  const parsed = new Date(rawDate);
-  if (Number.isNaN(parsed.getTime())) return null;
+  const parsed = parseApiDateTime(rawDate);
+  if (!parsed || Number.isNaN(parsed.getTime())) return null;
   parsed.setHours(0, 0, 0, 0);
   return parsed;
 };
 
 type ConcreteSearchField = Exclude<RequisitionSearchField, 'all'>;
 type HierarchyFilterField = 'location' | 'structure_type' | 'structure_name' | 'structure_id' | 'pile_lift_id';
+type StaticSelectFilterField = 'grade' | 'status' | 'approval_status';
 type SelectOption = { value: string; label: string };
 const MULTI_VALUE_SEPARATOR = '|||';
 const categoricalFields: HierarchyFilterField[] = [
@@ -68,22 +71,38 @@ const categoricalFields: HierarchyFilterField[] = [
   'structure_id',
   'pile_lift_id',
 ];
+const staticSelectOptions: Record<StaticSelectFilterField, string[]> = {
+  grade: ['M-10', 'M-20', 'M-25', 'M-30', 'M-45', 'M-45P', 'M-50', 'M-55', 'M-60'],
+  status: ['Pending', 'Approved', 'Dispatched', 'Returning', 'Reconciled'],
+  approval_status: ['Approved', 'Sent Back', 'Pending'],
+};
 const toOptions = (values: string[]): SelectOption[] =>
   Array.from(new Set(values.filter(Boolean)))
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
     .map((value) => ({ value, label: value }));
 
+const normalizedOrderDate = (requisition: Pick<ConcreteRequisition, 'req_date' | 'requisition_date'>) => {
+  const rawDate = requisition.requisition_date || requisition.req_date;
+  if (!rawDate) return '';
+  if (/^\d{4}-\d{2}-\d{2}/.test(rawDate)) return rawDate.slice(0, 10);
+
+  const parsed = parseApiDateTime(rawDate);
+  if (!parsed || Number.isNaN(parsed.getTime())) return String(rawDate);
+  return toDateInputIST(parsed);
+};
+
 const fieldValue = (requisition: ConcreteRequisition, field: ConcreteSearchField) => {
   const displayStatus = requisition.status === 'Validated' ? 'Approved' : requisition.status;
   const values: Record<Exclude<RequisitionSearchField, 'all'>, unknown> = {
     supply_id: requisition.supply_id,
-    requisition_date: formatOrderDate(requisition),
+    requisition_date: normalizedOrderDate(requisition),
     location: requisition.location,
     structure_type: requisition.structure_type,
     structure_name: requisition.structure_name,
     structure_id: requisition.structure_id,
     pile_lift_id: requisition.pile_lift_id,
     grade: requisition.grade,
+    requested_qty: requisition.requested_qty,
     status: displayStatus,
     approval_status: requisition.approval_status,
     planning_remarks: requisition.planning_remarks,
@@ -130,6 +149,7 @@ export const filterRequisitions = (
         'structure_id',
         'pile_lift_id',
         'grade',
+        'requested_qty',
         'status',
         'approval_status',
         'planning_remarks',
@@ -139,8 +159,19 @@ export const filterRequisitions = (
       );
     }
 
+    if (filters.searchField === 'requested_qty') {
+      const numericTerm = Number(searchTerm);
+      return Number.isFinite(numericTerm)
+        ? Math.abs(requisition.requested_qty - numericTerm) < 0.005
+        : false;
+    }
+
+    if (filters.searchField === 'requisition_date') {
+      return normalizedOrderDate(requisition) === searchTerm;
+    }
+
     const value = fieldValue(requisition, filters.searchField);
-    if (isHierarchyFilterField(filters.searchField)) {
+    if (isHierarchyFilterField(filters.searchField) || isStaticSelectFilterField(filters.searchField)) {
       return searchTerms.some((term) => value === term);
     }
     return searchTerms.some((term) => value.includes(term));
@@ -167,6 +198,9 @@ const selectClassNames = {
 const isHierarchyFilterField = (field: RequisitionSearchField): field is HierarchyFilterField =>
   categoricalFields.includes(field as HierarchyFilterField);
 
+const isStaticSelectFilterField = (field: RequisitionSearchField): field is StaticSelectFilterField =>
+  field === 'grade' || field === 'status' || field === 'approval_status';
+
 async function loadCategoricalOptions(field: RequisitionSearchField): Promise<string[]> {
   if (!isHierarchyFilterField(field)) return [];
   return hierarchyAPI.getFilterOptions(field);
@@ -182,10 +216,16 @@ const RequisitionFilters: React.FC<RequisitionFiltersProps> = ({
   const [categoricalOptions, setCategoricalOptions] = useState<SelectOption[]>([]);
   const [loadingOptions, setLoadingOptions] = useState(false);
   const isCategorical = isHierarchyFilterField(filters.searchField);
+  const isStaticSelect = isStaticSelectFilterField(filters.searchField);
+  const isDateSearch = filters.searchField === 'requisition_date';
+  const isNumberSearch = filters.searchField === 'requested_qty';
   const selectedOptions = useMemo(() => {
     const selectedValues = filters.searchTerm.split(MULTI_VALUE_SEPARATOR).filter(Boolean);
     return selectedValues.map((value) => ({ value, label: value }));
   }, [filters.searchTerm]);
+  const staticOptions = isStaticSelect
+    ? staticSelectOptions[filters.searchField as StaticSelectFilterField]
+    : [];
 
   useEffect(() => {
     let cancelled = false;
@@ -247,6 +287,7 @@ const RequisitionFilters: React.FC<RequisitionFiltersProps> = ({
           <option value="structure_id">Structure ID</option>
           <option value="pile_lift_id">Element ID</option>
           <option value="grade">Concrete Grade</option>
+          <option value="requested_qty">Order Quantity</option>
           <option value="status">Status</option>
           <option value="approval_status">Planning Decision</option>
           <option value="planning_remarks">Planning Remarks</option>
@@ -264,12 +305,41 @@ const RequisitionFilters: React.FC<RequisitionFiltersProps> = ({
             isLoading={loadingOptions}
             options={categoricalOptions}
             value={selectedOptions}
-            onChange={(options) =>
+            onChange={(options) => {
+              const selected = options as readonly SelectOption[];
               onChange({
                 ...filters,
-                searchTerm: options.map((option) => option.value).join(MULTI_VALUE_SEPARATOR),
-              })
-            }
+                searchTerm: selected.map((option: SelectOption) => option.value).join(MULTI_VALUE_SEPARATOR),
+              });
+            }}
+          />
+        ) : isStaticSelect ? (
+          <select
+            value={filters.searchTerm}
+            onChange={(event) => onChange({ ...filters, searchTerm: event.target.value })}
+            className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-[#003F72] focus:ring-2 focus:ring-[#003F72]/15"
+          >
+            <option value=""></option>
+            {staticOptions.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        ) : isDateSearch ? (
+          <input
+            type="date"
+            value={filters.searchTerm}
+            onChange={(event) => onChange({ ...filters, searchTerm: event.target.value })}
+            className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-[#003F72] focus:ring-2 focus:ring-[#003F72]/15"
+          />
+        ) : isNumberSearch ? (
+          <input
+            type="number"
+            step="0.01"
+            value={filters.searchTerm}
+            onChange={(event) => onChange({ ...filters, searchTerm: event.target.value })}
+            className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-[#003F72] focus:ring-2 focus:ring-[#003F72]/15"
           />
         ) : (
           <input

@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import Select from 'react-select';
 import { hierarchyAPI, requisitionAPI, userAPI } from '../api';
+import CollapsibleTableSection from '../components/CollapsibleTableSection';
 import PastRequisitionsModalButton from '../components/PastRequisitionsModalButton';
 import PastRequisitionsTable from '../components/PastRequisitionsTable';
 import RequisitionFilters, {
@@ -11,8 +12,15 @@ import RequisitionFilters, {
   formatOrderDate,
   RequisitionFilterState,
 } from '../components/RequisitionFilters';
-import RequisitionDetails from '../components/RequisitionDetails';
+import RequisitionFullDetails from '../components/RequisitionFullDetails';
 import StatusBadge from '../components/StatusBadge';
+import {
+  addHoursToApiDateTime,
+  formatDateTimeIST,
+  nowLocalIso,
+  parseApiDateTime,
+  toDateInputIST,
+} from '../timeUtils';
 import { ConcreteRequisition, RequisitionStatus, User } from '../types';
 
 interface ExecutionViewProps {
@@ -51,7 +59,7 @@ interface DraftOrder {
   data: ExecutionFormData;
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => toDateInputIST();
 
 const defaultValues = (currentUser?: User | null): ExecutionFormData => ({
   rfi_no: '',
@@ -181,6 +189,7 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
   const [generatedSupplyId, setGeneratedSupplyId] = useState('');
 
   const draftStorageKey = `executionDrafts:${currentUser?.id || 'anonymous'}`;
+  const editDraftStorageKey = `executionEditDrafts:${currentUser?.id || 'anonymous'}`;
 
   const locationValue = watch('location');
   const structureTypeValue = watch('structure_type');
@@ -225,6 +234,23 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
   const saveDrafts = (nextDrafts: DraftOrder[]) => {
     localStorage.setItem(draftStorageKey, JSON.stringify(nextDrafts));
     setDrafts(nextDrafts);
+  };
+
+  const hasMeaningfulDraftData = (data: ExecutionFormData) =>
+    Object.entries(data).some(([key, value]) =>
+      key !== 'in_charge_id' &&
+      value !== undefined &&
+      value !== null &&
+      value !== ''
+    );
+
+  const upsertDraft = (draft: DraftOrder) => {
+    const rawDrafts = localStorage.getItem(draftStorageKey);
+    const currentDrafts: DraftOrder[] = rawDrafts ? JSON.parse(rawDrafts) : [];
+    const nextDrafts = currentDrafts.some((item) => item.draft_id === draft.draft_id)
+      ? currentDrafts.map((item) => (item.draft_id === draft.draft_id ? draft : item))
+      : [draft, ...currentDrafts];
+    saveDrafts(nextDrafts);
   };
 
   const fetchOrders = async () => {
@@ -332,9 +358,31 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
     return () => window.clearTimeout(timeoutId);
   }, [editingSupplyId, locationValue, structureNameValue, structureIdValue]);
 
+  useEffect(() => {
+    if (!isModalOpen) return undefined;
+
+    const subscription = watch((value) => {
+      const formData = value as ExecutionFormData;
+      if (editingSupplyId) {
+        localStorage.setItem(`${editDraftStorageKey}:${editingSupplyId}`, JSON.stringify(formData));
+        return;
+      }
+
+      if (!activeDraftId || !hasMeaningfulDraftData(formData)) return;
+      upsertDraft({
+        draft_id: activeDraftId,
+        updated_at: nowLocalIso(),
+        data: formData,
+      });
+    });
+
+    return () => subscription.unsubscribe();
+  }, [activeDraftId, editDraftStorageKey, editingSupplyId, isModalOpen, watch]);
+
   const openNewOrder = () => {
+    const draftId = crypto.randomUUID();
     reset(defaultValues(currentUser));
-    setActiveDraftId(null);
+    setActiveDraftId(draftId);
     setEditingSupplyId(null);
     setGeneratedSupplyId('');
     setIsModalOpen(true);
@@ -357,15 +405,15 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
   const isSentBack = (order: ConcreteRequisition) => order.approval_status === 'Sent Back';
 
   const sentBackExpiresAt = (order: ConcreteRequisition) =>
-    order.sent_back_expires_at || (
-      order.validation_timestamp
-        ? new Date(new Date(order.validation_timestamp).getTime() + 12 * 60 * 60 * 1000).toISOString()
-        : undefined
-    );
+    order.sent_back_expires_at
+      ? parseApiDateTime(order.sent_back_expires_at) || undefined
+      : order.validation_timestamp
+        ? addHoursToApiDateTime(order.validation_timestamp, 12)
+        : undefined;
 
   const canEditSentBack = (order: ConcreteRequisition) => {
     const expiresAt = sentBackExpiresAt(order);
-    return isSentBack(order) && Boolean(expiresAt) && new Date(expiresAt as string).getTime() > Date.now();
+    return isSentBack(order) && !!expiresAt && expiresAt.getTime() > Date.now();
   };
 
   const orderStatusLabel = (order: ConcreteRequisition) => {
@@ -400,7 +448,8 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
   });
 
   const openSentBackEdit = (order: ConcreteRequisition) => {
-    reset(formValuesFromOrder(order));
+    const savedDraft = localStorage.getItem(`${editDraftStorageKey}:${order.supply_id}`);
+    reset(savedDraft ? JSON.parse(savedDraft) : formValuesFromOrder(order));
     setActiveDraftId(null);
     setEditingSupplyId(order.supply_id);
     setGeneratedSupplyId(order.supply_id);
@@ -410,14 +459,10 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
   const saveDraft = () => {
     const draft: DraftOrder = {
       draft_id: activeDraftId || crypto.randomUUID(),
-      updated_at: new Date().toISOString(),
+      updated_at: nowLocalIso(),
       data: getValues(),
     };
-    const nextDrafts = activeDraftId
-      ? drafts.map((item) => (item.draft_id === activeDraftId ? draft : item))
-      : [draft, ...drafts];
-
-    saveDrafts(nextDrafts);
+    upsertDraft(draft);
     setActiveDraftId(draft.draft_id);
     setSuccessMessage('Draft saved.');
     setTimeout(() => setSuccessMessage(''), 3000);
@@ -441,6 +486,7 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
     setSuccessMessage('');
 
     try {
+      const submittedEditingSupplyId = editingSupplyId;
       const response = editingSupplyId
         ? await requisitionAPI.resubmitRequisition(editingSupplyId, buildPayload(data))
         : await requisitionAPI.createRequisition(buildPayload(data));
@@ -451,6 +497,9 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
       );
       if (activeDraftId) {
         saveDrafts(drafts.filter((draft) => draft.draft_id !== activeDraftId));
+      }
+      if (submittedEditingSupplyId) {
+        localStorage.removeItem(`${editDraftStorageKey}:${submittedEditingSupplyId}`);
       }
       reset(defaultValues(currentUser));
       setActiveDraftId(null);
@@ -496,9 +545,9 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
       {successMessage && <div className="alert alert-success">{successMessage}</div>}
       {errorMessage && <div className="alert alert-danger">{errorMessage}</div>}
 
-      <div className="overflow-hidden rounded-lg bg-white shadow-md transition-shadow duration-200 ease-out hover:shadow-lg">
-        <div className="flex flex-col gap-3 bg-[#003F72] px-5 py-4 text-white sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="text-xl font-semibold">Current Orders ({filteredCurrentOrders.length})</h2>
+      <CollapsibleTableSection
+        title={`Current Orders (${filteredCurrentOrders.length})`}
+        actions={
           <button
             type="button"
             onClick={openNewOrder}
@@ -506,103 +555,102 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
           >
             Create New Order
           </button>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[920px]">
-            <thead className="bg-gray-100">
-              <tr>
-                <th className={tableHeaderClass}>Supply ID</th>
-                <th className={tableHeaderClass}>Date</th>
-                <th className={tableHeaderClass}>Location</th>
-                <th className={tableHeaderClass}>Structure</th>
-                <th className={tableHeaderClass}>Grade</th>
-                <th className={numericTableHeaderClass}>Order Qty</th>
-                <th className={tableHeaderClass}>Status</th>
-                <th className={tableHeaderClass}>Action</th>
+        }
+      >
+        <table className="w-full min-w-[920px]">
+          <thead className="bg-gray-100">
+            <tr>
+              <th className={tableHeaderClass}>Supply ID</th>
+              <th className={tableHeaderClass}>Date</th>
+              <th className={tableHeaderClass}>Location</th>
+              <th className={tableHeaderClass}>Structure</th>
+              <th className={tableHeaderClass}>Grade</th>
+              <th className={numericTableHeaderClass}>Order Qty</th>
+              <th className={tableHeaderClass}>Status</th>
+              <th className={tableHeaderClass}>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {drafts.map((draft) => (
+              <tr key={draft.draft_id} className="border-t border-gray-100 bg-amber-50/60 transition-colors duration-150 ease-out hover:bg-amber-100/70">
+                <td className="px-4 py-3 text-sm font-semibold text-amber-800">Draft</td>
+                <td className="px-4 py-3 text-sm">{draft.data.requisition_date || toDateInputIST(draft.updated_at)}</td>
+                <td className="px-4 py-3 text-sm">{draft.data.location || '-'}</td>
+                <td className="px-4 py-3 text-sm">{draft.data.structure_name || '-'}</td>
+                <td className="px-4 py-3 text-sm">{draft.data.grade || '-'}</td>
+                <td className="px-4 py-3 text-right text-sm">
+                  {draft.data.requested_qty ? draft.data.requested_qty.toFixed(2) : '-'}
+                </td>
+                <td className="px-4 py-3 text-sm">
+                  <StatusBadge status="Draft" />
+                </td>
+                <td className="px-4 py-3">
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => resumeDraft(draft)}
+                      className={tableActionButtonClass}
+                    >
+                      Resume
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteDraft(draft.draft_id)}
+                      className={tableActionButtonClass}
+                      title={`Saved ${formatDateTimeIST(draft.updated_at)}`}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {drafts.map((draft) => (
-                <tr key={draft.draft_id} className="border-t border-gray-100 bg-amber-50/60 transition-colors duration-150 ease-out hover:bg-amber-100/70">
-                  <td className="px-4 py-3 text-sm font-semibold text-amber-800">Draft</td>
-                  <td className="px-4 py-3 text-sm">{draft.data.requisition_date || new Date(draft.updated_at).toLocaleDateString()}</td>
-                  <td className="px-4 py-3 text-sm">{draft.data.location || '-'}</td>
-                  <td className="px-4 py-3 text-sm">{draft.data.structure_name || '-'}</td>
-                  <td className="px-4 py-3 text-sm">{draft.data.grade || '-'}</td>
-                  <td className="px-4 py-3 text-right text-sm">
-                    {draft.data.requested_qty ? draft.data.requested_qty.toFixed(2) : '-'}
-                  </td>
-                  <td className="px-4 py-3 text-sm">
-                    <StatusBadge status="Draft" />
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => resumeDraft(draft)}
-                        className={tableActionButtonClass}
-                      >
-                        Resume
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => deleteDraft(draft.draft_id)}
-                        className={tableActionButtonClass}
-                        title={`Saved ${new Date(draft.updated_at).toLocaleString()}`}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+            ))}
 
-              {filteredCurrentOrders.map((order) => (
-                <tr key={order.supply_id} className="border-t border-gray-100 transition-colors duration-150 ease-out hover:bg-blue-50/45">
-                  <td className="px-4 py-3 font-mono text-sm">{order.supply_id}</td>
-                  <td className="px-4 py-3 text-sm">{formatOrderDate(order)}</td>
-                  <td className="px-4 py-3 text-sm">{order.location}</td>
-                  <td className="px-4 py-3 text-sm">{order.structure_name}</td>
-                  <td className="px-4 py-3 text-sm">{order.grade}</td>
-                  <td className="px-4 py-3 text-right text-sm">{order.requested_qty.toFixed(2)}</td>
-                  <td className="px-4 py-3 text-sm">
-                    <StatusBadge status={orderStatusLabel(order)} />
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex gap-2">
-                      {canEditSentBack(order) && (
-                        <button
-                          type="button"
-                          onClick={() => openSentBackEdit(order)}
-                          className={tableActionButtonClass}
-                          title={`Edit window closes at ${new Date(sentBackExpiresAt(order) as string).toLocaleString()}`}
-                        >
-                          Edit
-                        </button>
-                      )}
+            {filteredCurrentOrders.map((order) => (
+              <tr key={order.supply_id} className="border-t border-gray-100 transition-colors duration-150 ease-out hover:bg-blue-50/45">
+                <td className="px-4 py-3 font-mono text-sm">{order.supply_id}</td>
+                <td className="px-4 py-3 text-sm">{formatOrderDate(order)}</td>
+                <td className="px-4 py-3 text-sm">{order.location}</td>
+                <td className="px-4 py-3 text-sm">{order.structure_name}</td>
+                <td className="px-4 py-3 text-sm">{order.grade}</td>
+                <td className="px-4 py-3 text-right text-sm">{order.requested_qty.toFixed(2)}</td>
+                <td className="px-4 py-3 text-sm">
+                  <StatusBadge status={orderStatusLabel(order)} />
+                </td>
+                <td className="px-4 py-3">
+                  <div className="flex gap-2">
+                    {canEditSentBack(order) && (
                       <button
                         type="button"
-                        onClick={() => setViewingOrder(order)}
+                        onClick={() => openSentBackEdit(order)}
                         className={tableActionButtonClass}
+                        title={`Edit window closes at ${formatDateTimeIST(sentBackExpiresAt(order))}`}
                       >
-                        View
+                        Edit
                       </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setViewingOrder(order)}
+                      className={tableActionButtonClass}
+                    >
+                      View
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
 
-              {drafts.length === 0 && filteredCurrentOrders.length === 0 && (
-                <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-500">
-                    No orders yet.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+            {drafts.length === 0 && filteredCurrentOrders.length === 0 && (
+              <tr>
+                <td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-500">
+                  No orders yet.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </CollapsibleTableSection>
 
       <PastRequisitionsTable
         requisitions={filteredHistoryOrders}
@@ -625,7 +673,7 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
                 Close
               </button>
             </div>
-            <RequisitionDetails requisition={viewingOrder} hidePlanningFields />
+            <RequisitionFullDetails requisition={viewingOrder} />
           </div>
         </div>
       )}

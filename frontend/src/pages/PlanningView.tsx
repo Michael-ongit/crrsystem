@@ -1,6 +1,7 @@
 // pages/PlanningView.tsx - Planning team validation interface
 import React, { useEffect, useMemo, useState } from 'react';
 import { requisitionAPI } from '../api';
+import CollapsibleTableSection from '../components/CollapsibleTableSection';
 import PastRequisitionsModalButton from '../components/PastRequisitionsModalButton';
 import PastRequisitionsTable from '../components/PastRequisitionsTable';
 import RequisitionFilters, {
@@ -9,6 +10,7 @@ import RequisitionFilters, {
   formatOrderDate,
   RequisitionFilterState,
 } from '../components/RequisitionFilters';
+import RequisitionFullDetails from '../components/RequisitionFullDetails';
 import RequisitionDetails from '../components/RequisitionDetails';
 import StatusBadge from '../components/StatusBadge';
 import { ConcreteRequisition, RequisitionStatus, User } from '../types';
@@ -26,10 +28,10 @@ const getErrorMessage = (error: any, fallback: string) => {
   return fallback;
 };
 
-const tableHeaderClass = 'px-4 py-3 text-left text-xs font-bold uppercase text-[#003F72]';
-const numericTableHeaderClass = 'px-4 py-3 text-right text-xs font-bold uppercase text-[#003F72]';
 const tableActionButtonClass =
   'rounded bg-[#003F72] px-3 py-1 text-sm font-semibold text-white shadow-sm transition-all duration-200 ease-out hover:bg-[#002B4E] hover:shadow';
+const tableHeaderClass = 'px-4 py-3 text-left text-xs font-bold uppercase text-[#003F72]';
+const numericTableHeaderClass = 'px-4 py-3 text-right text-xs font-bold uppercase text-[#003F72]';
 
 const PlanningView: React.FC<PlanningViewProps> = ({ currentUser }) => {
   const [requisitions, setRequisitions] = useState<ConcreteRequisition[]>([]);
@@ -42,6 +44,7 @@ const PlanningView: React.FC<PlanningViewProps> = ({ currentUser }) => {
   const [validating, setValidating] = useState(false);
   const [remarks, setRemarks] = useState('');
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const planningDraftStorageKey = `planningDecisionDrafts:${currentUser?.id || 'anonymous'}`;
 
   const fetchRequisitions = async () => {
     try {
@@ -80,9 +83,15 @@ const PlanningView: React.FC<PlanningViewProps> = ({ currentUser }) => {
 
   const openReview = (req: ConcreteRequisition) => {
     setSelectedRequisition(req);
-    setRemarks(req.planning_remarks || '');
+    const savedRemarks = localStorage.getItem(`${planningDraftStorageKey}:${req.supply_id}`);
+    setRemarks(savedRemarks ?? req.planning_remarks ?? '');
     setMessage(null);
   };
+
+  useEffect(() => {
+    if (!selectedRequisition) return;
+    localStorage.setItem(`${planningDraftStorageKey}:${selectedRequisition.supply_id}`, remarks);
+  }, [planningDraftStorageKey, remarks, selectedRequisition]);
 
   const handleValidate = async (approvalStatus: 'Approved' | 'Sent Back' | 'Pending') => {
     if (!selectedRequisition || !currentUser?.id) return;
@@ -105,6 +114,7 @@ const PlanningView: React.FC<PlanningViewProps> = ({ currentUser }) => {
       });
       setSelectedRequisition(null);
       setRemarks('');
+      localStorage.removeItem(`${planningDraftStorageKey}:${selectedRequisition.supply_id}`);
       await fetchRequisitions();
     } catch (error: any) {
       console.error('Validation error:', error);
@@ -147,60 +157,54 @@ const PlanningView: React.FC<PlanningViewProps> = ({ currentUser }) => {
         </div>
       )}
 
-      <div className="overflow-hidden rounded-lg bg-white shadow-md transition-shadow duration-200 ease-out hover:shadow-lg">
-        <div className="bg-[#003F72] px-5 py-4 text-white">
-          <h2 className="text-xl font-semibold">Pending Requisitions ({filteredRequisitions.length})</h2>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[860px]">
-            <thead className="bg-gray-100">
-              <tr>
-                <th className={tableHeaderClass}>Supply ID</th>
-                <th className={tableHeaderClass}>Date</th>
-                <th className={tableHeaderClass}>Location</th>
-                <th className={tableHeaderClass}>Structure</th>
-                <th className={tableHeaderClass}>Grade</th>
-                <th className={numericTableHeaderClass}>Qty</th>
-                <th className={tableHeaderClass}>Status</th>
-                <th className={tableHeaderClass}>Action</th>
+      <CollapsibleTableSection title={`Pending Requisitions (${filteredRequisitions.length})`}>
+        <table className="w-full min-w-[860px]">
+          <thead className="bg-gray-100">
+            <tr>
+              <th className={tableHeaderClass}>Supply ID</th>
+              <th className={tableHeaderClass}>Date</th>
+              <th className={tableHeaderClass}>Location</th>
+              <th className={tableHeaderClass}>Structure</th>
+              <th className={tableHeaderClass}>Grade</th>
+              <th className={numericTableHeaderClass}>Qty</th>
+              <th className={tableHeaderClass}>Status</th>
+              <th className={tableHeaderClass}>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredRequisitions.map((req) => (
+              <tr key={req.supply_id} className="border-t border-gray-100 transition-colors duration-150 ease-out hover:bg-blue-50/45">
+                <td className="px-4 py-3 font-mono text-sm">{req.supply_id}</td>
+                <td className="px-4 py-3 text-sm">{formatOrderDate(req)}</td>
+                <td className="px-4 py-3 text-sm">{req.location}</td>
+                <td className="px-4 py-3 text-sm">{req.structure_name}</td>
+                <td className="px-4 py-3 text-sm">{req.grade}</td>
+                <td className="px-4 py-3 text-right text-sm">{req.requested_qty.toFixed(2)}</td>
+                <td className="px-4 py-3 text-sm">
+                  <StatusBadge status={req.approval_status === 'Pending' ? 'Pending' : req.status} />
+                </td>
+                <td className="px-4 py-3">
+                  <button
+                    type="button"
+                    onClick={() => openReview(req)}
+                    className={tableActionButtonClass}
+                  >
+                    Review
+                  </button>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {filteredRequisitions.map((req) => (
-                <tr key={req.supply_id} className="border-t border-gray-100 transition-colors duration-150 ease-out hover:bg-blue-50/45">
-                  <td className="px-4 py-3 font-mono text-sm">{req.supply_id}</td>
-                  <td className="px-4 py-3 text-sm">{formatOrderDate(req)}</td>
-                  <td className="px-4 py-3 text-sm">{req.location}</td>
-                  <td className="px-4 py-3 text-sm">{req.structure_name}</td>
-                  <td className="px-4 py-3 text-sm">{req.grade}</td>
-                  <td className="px-4 py-3 text-right text-sm">{req.requested_qty.toFixed(2)}</td>
-                  <td className="px-4 py-3 text-sm">
-                    <StatusBadge status={req.approval_status === 'Pending' ? 'Pending' : req.status} />
-                  </td>
-                  <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      onClick={() => openReview(req)}
-                      className={tableActionButtonClass}
-                    >
-                      Review
-                    </button>
-                  </td>
-                </tr>
-              ))}
+            ))}
 
-              {filteredRequisitions.length === 0 && (
-                <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-500">
-                    No pending requisitions to validate
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+            {filteredRequisitions.length === 0 && (
+              <tr>
+                <td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-500">
+                  No pending requisitions to validate
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </CollapsibleTableSection>
 
       <PastRequisitionsTable requisitions={filteredHistory} onView={setViewingOrder} />
 
@@ -219,7 +223,7 @@ const PlanningView: React.FC<PlanningViewProps> = ({ currentUser }) => {
                 Close
               </button>
             </div>
-            <RequisitionDetails requisition={viewingOrder} hideWorkflowFields />
+            <RequisitionFullDetails requisition={viewingOrder} />
           </div>
         </div>
       )}

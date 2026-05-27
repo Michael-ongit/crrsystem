@@ -184,13 +184,12 @@ notepad .env
 ```
 DATABASE_BACKEND=sqlite
 SQLITE_DATABASE_PATH=mvdp_dev.db
-CORS_ORIGINS=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174", "http://127.0.0.1:5174", "http://localhost:5175", "http://127.0.0.1:5175", "http://localhost:3000"]
+CORS_ORIGINS=["http://localhost:5090", "http://127.0.0.1:5090"]
 ACE_LIMIT_PERCENT=1.0
 ```
 
-The default local database is created automatically at
-`%LOCALAPPDATA%\MVDPConcreteRecon\mvdp_dev.db`, so SSMS and SQL Server are not
-required for development.
+The default local database is created automatically at `backend\mvdp_dev.db`,
+so SSMS and SQL Server are not required for development.
 
 **Optional SQL Server .env:**
 ```env
@@ -281,7 +280,7 @@ Key settings:
 ### Frontend Configuration (`vite.config.ts`)
 
 Key settings:
-- `port: 5173` - Dev server port
+- `port: 5090` - Dev server port
 - `proxy` - Backend API proxy route
 - `build.outDir` - Build output directory
 
@@ -300,16 +299,16 @@ cd "c:\Michael\L_T internship\concrete_recon\backend"
 .\venv\Scripts\Activate.ps1
 
 # Start server
-python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
+python -m uvicorn main:app --reload --host 127.0.0.1 --port 8020
 ```
 
 **Expected Output:**
 ```
-INFO:     Uvicorn running on http://127.0.0.1:8000
+INFO:     Uvicorn running on http://127.0.0.1:8020
 INFO:     Application startup complete
 ```
 
-Access API docs at: **http://localhost:8000/docs**
+Access API docs at: **http://localhost:8020/docs**
 
 ### Terminal 2: Start Frontend (Vite)
 
@@ -320,10 +319,10 @@ npm run dev
 
 **Expected Output:**
 ```
-  ➜  Local:   http://localhost:5173/
+  ➜  Local:   http://localhost:5090/
 ```
 
-Open **http://localhost:5173** in your browser.
+Open **http://localhost:5090** in your browser.
 
 ### Quick Development Checks
 
@@ -347,7 +346,7 @@ npm run build
 
 ## 📚 API Documentation
 
-### Base URL: `http://localhost:8000`
+### Base URL: `http://localhost:8020`
 
 ### Authentication Endpoints
 
@@ -489,8 +488,8 @@ GET /dashboard/turnaround?days=30
 
 ### Interactive API Docs
 
-- **Swagger UI:** http://localhost:8000/docs
-- **ReDoc:** http://localhost:8000/redoc
+- **Swagger UI:** http://localhost:8020/docs
+- **ReDoc:** http://localhost:8020/redoc
 
 ---
 
@@ -529,7 +528,7 @@ if wastage_pct > 1.0:
 # Backend allows frontend to make requests
 # UPDATE in config.py if frontend URL changes:
 CORS_ORIGINS = [
-    "http://localhost:5173",  # Local dev
+    "http://localhost:5090",  # Local dev
     "https://yourproduction.com"  # Production
 ]
 ```
@@ -622,8 +621,8 @@ Error: "Address already in use"
 
 **Solution:**
 ```bash
-# Find process using port 8000
-netstat -ano | findstr :8000
+# Find process using port 8020
+netstat -ano | findstr :8020
 
 # Kill process (replace 12345 with PID)
 taskkill /pid 12345 /f
@@ -652,14 +651,14 @@ Error: "Access to XMLHttpRequest blocked by CORS"
 ```
 
 **Solution:**
-1. Verify backend is running on port 8000
+1. Verify backend is running on port 8020
 2. Check backend `config.py` CORS settings
 3. Check frontend `vite.config.ts` proxy settings
 4. Update `config.py` CORS_ORIGINS if frontend URL changed
 
-#### 3. Port 5173 Already in Use
+#### 3. Port 5090 Already in Use
 ```
-Error: "Port 5173 in use"
+Error: "Port 5090 in use"
 ```
 
 **Solution:**
@@ -704,7 +703,7 @@ Error: "Login failed for user 'sa'"
 | `DATABASE_NAME` | `MVDP_DB` | Database name |
 | `DATABASE_USER` | `sa` | SQL Server user |
 | `DATABASE_PASSWORD` | `Strong@Pass123` | SQL Server password |
-| `CORS_ORIGINS` | `["http://localhost:5173"]` | Allowed frontend URLs |
+| `CORS_ORIGINS` | `["http://localhost:5090"]` | Allowed frontend URLs |
 | `ACE_LIMIT_PERCENT` | `1.0` | Wastage threshold % |
 
 ---
@@ -715,18 +714,18 @@ Error: "Login failed for user 'sa'"
 
 ```bash
 # 1. Create user
-curl -X POST http://localhost:8000/users \
+curl -X POST http://localhost:8020/users \
   -H "Content-Type: application/json" \
   -d '{"name":"Test User","email":"test@mvdp.com","role":"Execution"}'
 
 # 2. Get all users
-curl http://localhost:8000/users
+curl http://localhost:8020/users
 
 # 3. Preview generated Supply ID
-curl "http://localhost:8000/requisitions/supply-id/preview?location=Test%20Location&structure_name=Test&structure_id=str-001"
+curl "http://localhost:8020/requisitions/supply-id/preview?location=Test%20Location&structure_name=Test&structure_id=str-001"
 
 # 4. Create requisition. Do not send supply_id; the backend generates it.
-curl -X POST http://localhost:8000/requisitions \
+curl -X POST http://localhost:8020/requisitions \
   -H "Content-Type: application/json" \
   -d '{
     "location":"Test Location",
@@ -750,7 +749,7 @@ curl -X POST http://localhost:8000/requisitions \
 pip install -r requirements.txt
 
 # Run with production server
-python -m gunicorn -w 4 -b 0.0.0.0:8000 main:app
+python -m gunicorn -w 4 -b 0.0.0.0:8020 main:app
 ```
 
 #### Frontend
@@ -792,13 +791,13 @@ Internal project - Mumbai Versova Dahisar Project (MVDP)
 ## 🎉 Ready to Go!
 
 Once setup is complete:
-1. ✅ Backend API running on http://localhost:8000
-2. ✅ Interactive API docs on http://localhost:8000/docs
-3. ✅ Frontend application on http://localhost:5173
+1. ✅ Backend API running on http://localhost:8020
+2. ✅ Interactive API docs on http://localhost:8020/docs
+3. ✅ Frontend application on http://localhost:5090
 4. ✅ Database connected and initialized
 
 **Start using the system!**
-- Go to http://localhost:5173
+- Go to http://localhost:5090
 - Switch roles in the demo
 - Create requisitions, validate, dispatch, and monitor KPIs
 

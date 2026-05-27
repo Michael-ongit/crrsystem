@@ -1,5 +1,5 @@
 # schemas.py - Pydantic V2 models for request/response validation
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from datetime import datetime
 from typing import Optional, List
 from enum import Enum
@@ -198,6 +198,24 @@ class ProductionDispatchCreate(BaseModel):
         return round(v, 2)
 
 
+class DispatchReceiptAllocationResponse(BaseModel):
+    """Concrete quantity deposited at one actual receipt destination."""
+    allocation_id: str
+    dispatch_id: str
+    deposited_qty: float
+    receipt_location: str
+    receipt_structure_name: str
+    receipt_structure_id: str
+    receipt_at_site_time: datetime
+    release_from_site_time: datetime
+    remarks: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class ProductionDispatchResponse(BaseModel):
     """Schema for production dispatch response"""
     dispatch_id: str
@@ -213,6 +231,9 @@ class ProductionDispatchResponse(BaseModel):
     return_to_plant_time: Optional[datetime] = None
     remarks: Optional[str] = None
     wastage_qty: Optional[float]
+    receipt_allocations: List[DispatchReceiptAllocationResponse] = Field(default_factory=list)
+    allocated_qty: float = 0.0
+    remaining_qty: float = 0.0
     created_at: datetime
     updated_at: datetime
     
@@ -286,9 +307,35 @@ class DispatchReconciliationUpdate(BaseModel):
 
 class DispatchAcknowledgementUpdate(BaseModel):
     """Schema for acknowledging site receipt and release before plant return"""
+    details_match: bool = True
     receipt_at_site_time: datetime
     release_from_site_time: datetime
+    deposited_qty: Optional[float] = Field(None, gt=0, le=10000)
+    receipt_location: Optional[str] = Field(None, max_length=500)
+    receipt_structure_name: Optional[str] = Field(None, max_length=255)
+    receipt_structure_id: Optional[str] = Field(None, max_length=50)
     remarks: Optional[str] = Field(None, max_length=2000)
+
+    @model_validator(mode="after")
+    def validate_partial_receipt_details(self):
+        if self.details_match:
+            return self
+
+        missing_fields = []
+        if self.deposited_qty is None:
+            missing_fields.append("deposited_qty")
+        if not self.receipt_location or not self.receipt_location.strip():
+            missing_fields.append("receipt_location")
+        if not self.receipt_structure_name or not self.receipt_structure_name.strip():
+            missing_fields.append("receipt_structure_name")
+        if not self.receipt_structure_id or not self.receipt_structure_id.strip():
+            missing_fields.append("receipt_structure_id")
+
+        if missing_fields:
+            raise ValueError(
+                "Partial acknowledgement requires: " + ", ".join(missing_fields)
+            )
+        return self
 
 
 class ReturnToPlantUpdate(BaseModel):

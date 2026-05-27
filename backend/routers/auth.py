@@ -1,10 +1,12 @@
 # routers/auth.py - Development registration and login endpoints
-from datetime import datetime, timedelta
+from datetime import timedelta
 import hashlib
 import hmac
+import logging
 import secrets
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from config import settings
@@ -18,8 +20,10 @@ from schemas import (
     UserResponse,
     MessageResponse,
 )
+from time_utils import now_ist
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+logger = logging.getLogger(__name__)
 
 
 def _hash_token(token: str) -> str:
@@ -69,7 +73,7 @@ def get_current_user(
         .filter(
             AuthSession.token_hash == _hash_token(token),
             AuthSession.revoked_at.is_(None),
-            AuthSession.expires_at > datetime.utcnow(),
+            AuthSession.expires_at > now_ist(),
         )
         .first()
     )
@@ -105,29 +109,45 @@ def require_roles(*roles: UserRole):
     summary="Register a development user",
 )
 def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
-    existing_user = db.query(User).filter(User.email == payload.email).first()
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="An account with this email already exists",
+    try:
+        existing_user = db.query(User).filter(User.email == payload.email).first()
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="An account with this email already exists. Switch to Login or use another email.",
+            )
+
+        user = User(
+            name=payload.name,
+            email=payload.email,
+            role=UserRole(payload.role.value),
+            password_hash=hash_password(payload.password),
+            is_email_verified=True,
         )
 
-    user = User(
-        name=payload.name,
-        email=payload.email,
-        role=UserRole(payload.role.value),
-        password_hash=hash_password(payload.password),
-        is_email_verified=True,
-    )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
 
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-
-    return RegisterResponse(
-        message="Registration successful. You can now log in.",
-        email=payload.email,
-    )
+        return RegisterResponse(
+            message="Registration successful. You can now log in.",
+            email=payload.email,
+        )
+    except HTTPException:
+        raise
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="An account with this email already exists. Switch to Login or use another email.",
+        )
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Registration failed for %s", payload.email)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Registration failed: {exc.__class__.__name__}. Check backend logs for details.",
+        )
 
 
 @router.post("/login", response_model=AuthResponse, summary="Log in with email and password")
@@ -137,10 +157,10 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
     token = secrets.token_urlsafe(40)
-    expires_at = datetime.utcnow() + timedelta(days=settings.AUTH_SESSION_DAYS)
+    expires_at = now_ist() + timedelta(days=settings.AUTH_SESSION_DAYS)
     session = AuthSession(user_id=user.id, token_hash=_hash_token(token), expires_at=expires_at)
 
-    user.last_login_at = datetime.utcnow()
+    user.last_login_at = now_ist()
     db.add(session)
     db.commit()
     db.refresh(user)
@@ -162,7 +182,7 @@ def logout(
         token = authorization.split(" ", 1)[1].strip()
         session = db.query(AuthSession).filter(AuthSession.token_hash == _hash_token(token)).first()
         if session:
-            session.revoked_at = datetime.utcnow()
+            session.revoked_at = now_ist()
             db.commit()
 
     return MessageResponse(message="Logged out successfully")

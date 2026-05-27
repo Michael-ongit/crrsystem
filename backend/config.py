@@ -28,9 +28,8 @@ class Settings(BaseSettings):
         if self.DATABASE_BACKEND.lower() != "mssql":
             db_path = Path(self.SQLITE_DATABASE_PATH)
             if not db_path.is_absolute():
-                base_dir = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "MVDPConcreteRecon"
-                base_dir.mkdir(parents=True, exist_ok=True)
-                db_path = base_dir / db_path
+                db_path = Path(__file__).resolve().parent / db_path
+            db_path.parent.mkdir(parents=True, exist_ok=True)
             return f"sqlite:///{db_path.as_posix()}"
 
         from sqlalchemy.engine import URL
@@ -52,6 +51,8 @@ class Settings(BaseSettings):
     
     # CORS Configuration
     CORS_ORIGINS: list = [
+        "http://localhost:5090",
+        "http://127.0.0.1:5090",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://localhost:5174",
@@ -65,6 +66,7 @@ class Settings(BaseSettings):
     API_TITLE: str = "Concrete Requisition & Reconciliation System"
     API_VERSION: str = "1.0.0"
     AUTH_SESSION_DAYS: int = 7
+    SEED_SAMPLE_DATA: bool = True
     
     # Business Rules
     ACE_LIMIT_PERCENT: float = 1.0  # Maximum allowed wastage percentage

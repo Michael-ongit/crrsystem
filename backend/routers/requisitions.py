@@ -13,7 +13,8 @@ from schemas import (
     PlanningValidationCreate, PlanningValidationResponse,
     SupplyIdPreviewResponse
 )
-from datetime import datetime, timedelta
+from datetime import timedelta
+from time_utils import now_ist
 import logging
 import re
 
@@ -97,7 +98,7 @@ def _supply_id_base(location: str, structure_name: str, structure_id: str) -> st
     location_code = _compact_token(location, 5, "SITE")
     structure_code = _compact_token(structure_name, 6, "STRUCT")
     structure_id_code = _compact_token(structure_id, 8, "ID")
-    date_code = datetime.utcnow().strftime("%y%m%d")
+    date_code = now_ist().strftime("%y%m%d")
     return f"MVDP-{location_code}-{structure_code}-{structure_id_code}-{date_code}"
 
 
@@ -485,7 +486,7 @@ def resubmit_sent_back_requisition(
             )
 
         expires_at = latest_validation.validation_timestamp + timedelta(hours=SEND_BACK_EDIT_WINDOW_HOURS)
-        if datetime.utcnow() > expires_at:
+        if now_ist() > expires_at:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="The 12-hour edit window for this sent-back requisition has expired"
@@ -500,14 +501,14 @@ def resubmit_sent_back_requisition(
 
         _apply_requisition_payload(db_requisition, requisition)
         db_requisition.status = RequisitionStatus.PENDING
-        db_requisition.updated_at = datetime.utcnow()
+        db_requisition.updated_at = now_ist()
 
         db_validation = PlanningValidation(
             supply_id=supply_id,
             validated_by=current_user.id,
             planning_remarks="Resubmitted by execution",
             is_approved="Pending",
-            validation_timestamp=datetime.utcnow()
+            validation_timestamp=now_ist()
         )
         db.add(db_validation)
         db.commit()
@@ -585,7 +586,7 @@ def validate_requisition(
             validated_by=validation.validated_by,
             planning_remarks=validation.planning_remarks,
             is_approved=validation.is_approved,
-            validation_timestamp=datetime.utcnow()
+            validation_timestamp=now_ist()
         )
         
         # Update requisition status based on approval
@@ -595,7 +596,7 @@ def validate_requisition(
             requisition.status = RequisitionStatus.PENDING
         # If "Pending", status stays as is
         
-        requisition.updated_at = datetime.utcnow()
+        requisition.updated_at = now_ist()
         
         db.add(db_validation)
         db.commit()

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { productionAPI, requisitionAPI, userAPI } from '../api';
+import CollapsibleTableSection from '../components/CollapsibleTableSection';
 import PastRequisitionsModalButton from '../components/PastRequisitionsModalButton';
 import PastRequisitionsTable from '../components/PastRequisitionsTable';
 import RequisitionFilters, {
@@ -9,10 +10,23 @@ import RequisitionFilters, {
   formatOrderDate,
   RequisitionFilterState,
 } from '../components/RequisitionFilters';
-import RequisitionDetails from '../components/RequisitionDetails';
+import RequisitionFullDetails from '../components/RequisitionFullDetails';
+import { getAllocatedQty, getRemainingQty, isDispatchFullyAllocated } from '../dispatchUtils';
+import {
+  combineISTDateTimeForApi,
+  formatDateTimeIST,
+  parseApiDateTime,
+  toDateInputIST,
+  toTimeInputIST,
+} from '../timeUtils';
 import { ConcreteRequisition, ProductionDispatch, RequisitionStatus } from '../types';
 
 interface ReconciliationFormData {
+  details_match: boolean;
+  deposited_qty?: number;
+  receipt_location: string;
+  receipt_structure_name: string;
+  receipt_structure_id: string;
   receipt_at_site_date: string;
   receipt_at_site_time: string;
   release_from_site_date: string;
@@ -32,11 +46,7 @@ const fieldClass =
 const tableHeaderClass = 'px-4 py-3 text-left text-xs font-bold uppercase text-[#003F72]';
 const numericTableHeaderClass = 'px-4 py-3 text-right text-xs font-bold uppercase text-[#003F72]';
 
-const today = () => new Date().toISOString().slice(0, 10);
-
-const combineDateTime = (date: string, time: string) => new Date(`${date}T${time}`).toISOString();
-
-const formatDateTime = (value?: string) => (value ? new Date(value).toLocaleString() : '-');
+const today = () => toDateInputIST();
 
 const display = (value: unknown) => {
   if (value === undefined || value === null || value === '') return '-';
@@ -71,11 +81,13 @@ const DispatchSummaryView: React.FC = () => {
     register,
     handleSubmit,
     getValues,
+    watch,
     formState: { errors },
     reset,
   } = useForm<ReconciliationFormData>();
 
   const draftStorageKey = 'dispatchReconciliationDrafts';
+  const detailsMatch = watch('details_match');
 
   const readDrafts = (): Record<string, ReconciliationFormData> => {
     const rawDrafts = localStorage.getItem(draftStorageKey);
@@ -99,7 +111,7 @@ const DispatchSummaryView: React.FC = () => {
       setAllDispatches(dispatches);
       const pendingDispatches = dispatches.filter((dispatch) =>
         !dispatch.return_to_plant_time &&
-        (!dispatch.receipt_at_site_time || !dispatch.release_from_site_time)
+        !isDispatchFullyAllocated(dispatch)
       );
       const groupedOrders = Array.from(
         pendingDispatches.reduce((groups, dispatch) => {
@@ -120,15 +132,16 @@ const DispatchSummaryView: React.FC = () => {
       ).map((order) => ({
         ...order,
         dispatches: order.dispatches.sort(
-          (a, b) => new Date(a.dispatch_time).getTime() - new Date(b.dispatch_time).getTime()
+          (a, b) =>
+            (parseApiDateTime(a.dispatch_time)?.getTime() || 0) -
+            (parseApiDateTime(b.dispatch_time)?.getTime() || 0)
         ),
       }));
       setOrders(groupedOrders);
       const acknowledgedSupplyIds = new Set(
         dispatches
           .filter((dispatch) =>
-            dispatch.receipt_at_site_time &&
-            dispatch.release_from_site_time &&
+            isDispatchFullyAllocated(dispatch) &&
             !dispatch.return_to_plant_time
           )
           .map((dispatch) => dispatch.supply_id)
@@ -153,20 +166,26 @@ const DispatchSummaryView: React.FC = () => {
     fetchData();
   }, []);
 
-  const resetAcknowledgementForm = (dispatch: ProductionDispatch) => {
+  const resetAcknowledgementForm = (dispatch: ProductionDispatch, order: DispatchOrder | null = selectedOrder) => {
     const draft = readDrafts()[dispatch.dispatch_id];
+    const requisition = order?.requisition;
     reset({
+      details_match: draft?.details_match ?? true,
+      deposited_qty: draft?.deposited_qty ?? getRemainingQty(dispatch),
+      receipt_location: draft?.receipt_location || dispatch.receipt_location || requisition?.location || '',
+      receipt_structure_name: draft?.receipt_structure_name || requisition?.structure_name || '',
+      receipt_structure_id: draft?.receipt_structure_id || requisition?.structure_id || '',
       receipt_at_site_date: draft?.receipt_at_site_date || (
-        dispatch.receipt_at_site_time ? new Date(dispatch.receipt_at_site_time).toISOString().slice(0, 10) : today()
+        dispatch.receipt_at_site_time ? toDateInputIST(dispatch.receipt_at_site_time) : today()
       ),
       receipt_at_site_time: draft?.receipt_at_site_time || (
-        dispatch.receipt_at_site_time ? new Date(dispatch.receipt_at_site_time).toTimeString().slice(0, 5) : ''
+        dispatch.receipt_at_site_time ? toTimeInputIST(dispatch.receipt_at_site_time) : ''
       ),
       release_from_site_date: draft?.release_from_site_date || (
-        dispatch.release_from_site_time ? new Date(dispatch.release_from_site_time).toISOString().slice(0, 10) : today()
+        dispatch.release_from_site_time ? toDateInputIST(dispatch.release_from_site_time) : today()
       ),
       release_from_site_time: draft?.release_from_site_time || (
-        dispatch.release_from_site_time ? new Date(dispatch.release_from_site_time).toTimeString().slice(0, 5) : ''
+        dispatch.release_from_site_time ? toTimeInputIST(dispatch.release_from_site_time) : ''
       ),
       remarks: draft?.remarks || dispatch.remarks || '',
     });
@@ -178,12 +197,12 @@ const DispatchSummaryView: React.FC = () => {
     setSelectedOrder(order);
     setSelectedDispatchId(firstDispatch.dispatch_id);
     setMessage(null);
-    resetAcknowledgementForm(firstDispatch);
+    resetAcknowledgementForm(firstDispatch, order);
   };
 
   const selectDispatch = (dispatch: ProductionDispatch) => {
     setSelectedDispatchId(dispatch.dispatch_id);
-    resetAcknowledgementForm(dispatch);
+    resetAcknowledgementForm(dispatch, selectedOrder);
   };
 
   const selectedDispatch = useMemo(() => {
@@ -216,8 +235,13 @@ const DispatchSummaryView: React.FC = () => {
 
     try {
       await productionAPI.acknowledgeDispatch(selectedDispatch.dispatch_id, {
-        receipt_at_site_time: combineDateTime(data.receipt_at_site_date, data.receipt_at_site_time),
-        release_from_site_time: combineDateTime(data.release_from_site_date, data.release_from_site_time),
+        details_match: data.details_match,
+        receipt_at_site_time: combineISTDateTimeForApi(data.receipt_at_site_date, data.receipt_at_site_time),
+        release_from_site_time: combineISTDateTimeForApi(data.release_from_site_date, data.release_from_site_time),
+        deposited_qty: data.details_match ? undefined : data.deposited_qty,
+        receipt_location: data.details_match ? undefined : data.receipt_location,
+        receipt_structure_name: data.details_match ? undefined : data.receipt_structure_name,
+        receipt_structure_id: data.details_match ? undefined : data.receipt_structure_id,
         remarks: data.remarks || undefined,
       });
       const drafts = readDrafts();
@@ -240,7 +264,7 @@ const DispatchSummaryView: React.FC = () => {
     const { requisition } = selectedOrder;
     const dispatch = selectedDispatch;
     return [
-      ['Date', requisition.requisition_date || new Date(requisition.req_date).toLocaleDateString()],
+      ['Date', formatOrderDate(requisition)],
       ['Supply ID', dispatch.supply_id],
       ['Location', requisition.location],
       ['In-Charge', userNames[requisition.in_charge_id] || requisition.in_charge_id],
@@ -255,7 +279,9 @@ const DispatchSummaryView: React.FC = () => {
       ['Batching Plant ID', dispatch.batching_plant_id],
       ['Vehicle Number', dispatch.tm_number],
       ['Quantity Dispatched', dispatch.actual_dispatched_qty],
-      ['Dispatch time', new Date(dispatch.dispatch_time).toLocaleString()],
+      ['Quantity Deposited', getAllocatedQty(dispatch)],
+      ['Remaining in Vehicle', getRemainingQty(dispatch)],
+      ['Dispatch time', formatDateTimeIST(dispatch.dispatch_time)],
       ['Receipt Location', dispatch.receipt_location],
     ] as Array<[string, unknown]>;
   }, [selectedDispatch, selectedOrder, userNames]);
@@ -264,25 +290,36 @@ const DispatchSummaryView: React.FC = () => {
     if (!selectedOrder) return [];
     return allDispatches
       .filter((dispatch) => dispatch.supply_id === selectedOrder.supply_id)
-      .sort((a, b) => new Date(a.dispatch_time).getTime() - new Date(b.dispatch_time).getTime());
+      .sort(
+        (a, b) =>
+          (parseApiDateTime(a.dispatch_time)?.getTime() || 0) -
+          (parseApiDateTime(b.dispatch_time)?.getTime() || 0)
+      );
   }, [allDispatches, selectedOrder]);
 
   const selectedDispatchSummary = useMemo(() => {
-    const requestedQty = selectedOrder?.requisition.requested_qty || 0;
-    const dispatchedQty = selectedVehicleDispatches.reduce(
-      (total, dispatch) => total + dispatch.actual_dispatched_qty,
-      0
-    );
+    const dispatchedQty = selectedDispatch?.actual_dispatched_qty || 0;
+    const arrivedQty = selectedDispatch ? getAllocatedQty(selectedDispatch) : 0;
     return {
-      requestedQty,
       dispatchedQty,
-      remainingQty: Math.max(0, requestedQty - dispatchedQty),
+      arrivedQty,
+      remainingQty: selectedDispatch ? getRemainingQty(selectedDispatch) : 0,
     };
-  }, [selectedOrder?.requisition.requested_qty, selectedVehicleDispatches]);
+  }, [selectedDispatch]);
 
-  const selectedDispatchAcknowledged = Boolean(
-    selectedDispatch?.receipt_at_site_time && selectedDispatch.release_from_site_time
-  );
+  const selectedDispatchAcknowledged = Boolean(selectedDispatch && isDispatchFullyAllocated(selectedDispatch));
+
+  useEffect(() => {
+    if (!selectedDispatch || selectedDispatchAcknowledged) return undefined;
+
+    const subscription = watch((value) => {
+      const drafts = readDrafts();
+      drafts[selectedDispatch.dispatch_id] = value as ReconciliationFormData;
+      writeDrafts(drafts);
+    });
+
+    return () => subscription.unsubscribe();
+  }, [selectedDispatch?.dispatch_id, selectedDispatchAcknowledged, watch]);
 
   const filteredOrders = useMemo(() => {
     const requisitions = orders.map((order) => order.requisition);
@@ -322,67 +359,62 @@ const DispatchSummaryView: React.FC = () => {
         </div>
       )}
 
-      <div className="overflow-hidden rounded-lg bg-white shadow-md transition-shadow duration-200 ease-out hover:shadow-lg">
-        <div className="bg-[#003F72] px-5 py-4 text-white">
-          <h2 className="text-xl font-semibold">Dispatched Orders ({filteredOrders.length})</h2>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1060px]">
-            <thead className="bg-gray-100">
-              <tr>
-                <th className={tableHeaderClass}>Supply ID</th>
-                <th className={tableHeaderClass}>Date</th>
-                <th className={tableHeaderClass}>Location</th>
-                <th className={tableHeaderClass}>Vehicles</th>
-                <th className={tableHeaderClass}>Plants</th>
-                <th className={numericTableHeaderClass}>Qty Dispatched</th>
-                <th className={tableHeaderClass}>Pending Ack.</th>
-                <th className={tableHeaderClass}>Destination</th>
-                <th className={tableHeaderClass}>Action</th>
+      <CollapsibleTableSection title={`Dispatched Orders (${filteredOrders.length})`}>
+        <table className="w-full min-w-[1060px]">
+          <thead className="bg-gray-100">
+            <tr>
+              <th className={tableHeaderClass}>Supply ID</th>
+              <th className={tableHeaderClass}>Date</th>
+              <th className={tableHeaderClass}>Location</th>
+              <th className={tableHeaderClass}>Vehicles</th>
+              <th className={tableHeaderClass}>Plants</th>
+              <th className={numericTableHeaderClass}>Qty Dispatched</th>
+              <th className={tableHeaderClass}>Pending Ack.</th>
+              <th className={tableHeaderClass}>Destination</th>
+              <th className={tableHeaderClass}>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredOrders.map((order) => (
+              <tr key={order.supply_id} className="border-t border-gray-100 transition-colors duration-150 ease-out hover:bg-blue-50/45">
+                <td className="px-4 py-3 font-mono text-sm">{order.supply_id}</td>
+                <td className="px-4 py-3 text-sm">{formatOrderDate(order.requisition)}</td>
+                <td className="px-4 py-3 text-sm">{order.requisition.location}</td>
+                <td className="px-4 py-3 text-sm">
+                  {order.dispatches.map((dispatch) => dispatch.tm_number).join(', ')}
+                </td>
+                <td className="px-4 py-3 text-sm">
+                  {Array.from(new Set(order.dispatches.map((dispatch) => dispatch.batching_plant_id || '-'))).join(', ')}
+                </td>
+                <td className="px-4 py-3 text-right text-sm">
+                  {order.dispatches.reduce((total, dispatch) => total + dispatch.actual_dispatched_qty, 0).toFixed(2)}
+                </td>
+                <td className="px-4 py-3 text-sm">{order.dispatches.length}</td>
+                <td className="px-4 py-3 text-sm">
+                  {Array.from(new Set(order.dispatches.map((dispatch) => dispatch.receipt_location || '-'))).join(', ')}
+                </td>
+                <td className="px-4 py-3">
+                  <button
+                    type="button"
+                    onClick={() => openReconcile(order)}
+                    className="rounded bg-[#003F72] px-3 py-1 text-sm font-semibold text-white shadow-sm transition-all duration-200 ease-out hover:bg-[#002B4E] hover:shadow"
+                  >
+                    Open
+                  </button>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {filteredOrders.map((order) => (
-                <tr key={order.supply_id} className="border-t border-gray-100 transition-colors duration-150 ease-out hover:bg-blue-50/45">
-                  <td className="px-4 py-3 font-mono text-sm">{order.supply_id}</td>
-                  <td className="px-4 py-3 text-sm">{formatOrderDate(order.requisition)}</td>
-                  <td className="px-4 py-3 text-sm">{order.requisition.location}</td>
-                  <td className="px-4 py-3 text-sm">
-                    {order.dispatches.map((dispatch) => dispatch.tm_number).join(', ')}
-                  </td>
-                  <td className="px-4 py-3 text-sm">
-                    {Array.from(new Set(order.dispatches.map((dispatch) => dispatch.batching_plant_id || '-'))).join(', ')}
-                  </td>
-                  <td className="px-4 py-3 text-right text-sm">
-                    {order.dispatches.reduce((total, dispatch) => total + dispatch.actual_dispatched_qty, 0).toFixed(2)}
-                  </td>
-                  <td className="px-4 py-3 text-sm">{order.dispatches.length}</td>
-                  <td className="px-4 py-3 text-sm">
-                    {Array.from(new Set(order.dispatches.map((dispatch) => dispatch.receipt_location || '-'))).join(', ')}
-                  </td>
-                  <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      onClick={() => openReconcile(order)}
-                      className="rounded bg-[#003F72] px-3 py-1 text-sm font-semibold text-white shadow-sm transition-all duration-200 ease-out hover:bg-[#002B4E] hover:shadow"
-                    >
-                      Open
-                    </button>
-                  </td>
-                </tr>
-              ))}
+            ))}
 
-              {filteredOrders.length === 0 && (
-                <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-sm text-gray-500">
-                    No dispatched orders waiting for acknowledgement.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+            {filteredOrders.length === 0 && (
+              <tr>
+                <td colSpan={9} className="px-4 py-8 text-center text-sm text-gray-500">
+                  No dispatched orders waiting for acknowledgement.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </CollapsibleTableSection>
 
       <PastRequisitionsTable requisitions={filteredHistory} onView={setViewingOrder} />
 
@@ -401,7 +433,7 @@ const DispatchSummaryView: React.FC = () => {
                 Close
               </button>
             </div>
-            <RequisitionDetails requisition={viewingOrder} />
+            <RequisitionFullDetails requisition={viewingOrder} />
           </div>
         </div>
       )}
@@ -436,15 +468,15 @@ const DispatchSummaryView: React.FC = () => {
 
                 <dl className="grid grid-cols-1 gap-3">
                   <div className="rounded-md bg-white px-3 py-2 shadow-sm">
-                    <dt className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Total Qty</dt>
+                    <dt className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Qty Dispatched</dt>
                     <dd className="mt-1 text-lg font-bold text-gray-900">
-                      {selectedDispatchSummary.requestedQty.toFixed(2)} cum
+                      {selectedDispatchSummary.dispatchedQty.toFixed(2)} cum
                     </dd>
                   </div>
                   <div className="rounded-md bg-white px-3 py-2 shadow-sm">
-                    <dt className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Qty Dispatched</dt>
+                    <dt className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Qty Arrived</dt>
                     <dd className="mt-1 text-lg font-bold text-[#003F72]">
-                      {selectedDispatchSummary.dispatchedQty.toFixed(2)} cum
+                      {selectedDispatchSummary.arrivedQty.toFixed(2)} cum
                     </dd>
                   </div>
                   <div className="rounded-md bg-white px-3 py-2 shadow-sm">
@@ -483,7 +515,9 @@ const DispatchSummaryView: React.FC = () => {
                             </span>
                           </div>
                           <p className="mt-2 text-xs text-gray-600">
-                            {dispatch.receipt_at_site_time ? 'Acknowledged' : 'Pending acknowledgement'}
+                            {isDispatchFullyAllocated(dispatch)
+                              ? 'Fully acknowledged'
+                              : `Remaining ${getRemainingQty(dispatch).toFixed(2)} cum`}
                           </p>
                         </button>
                       );
@@ -522,8 +556,8 @@ const DispatchSummaryView: React.FC = () => {
 
                       <dl className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                         {([
-                          ['Receipt at Site', formatDateTime(selectedDispatch?.receipt_at_site_time)],
-                          ['Release from Site', formatDateTime(selectedDispatch?.release_from_site_time)],
+                          ['Receipt at Site', formatDateTimeIST(selectedDispatch?.receipt_at_site_time)],
+                          ['Release from Site', formatDateTimeIST(selectedDispatch?.release_from_site_time)],
                           ['Remarks', selectedDispatch?.remarks],
                         ] as Array<[string, unknown]>).map(([label, value]) => (
                           <div key={label} className="min-w-0 rounded-md border border-gray-200 bg-white px-3 py-2">
@@ -537,6 +571,83 @@ const DispatchSummaryView: React.FC = () => {
                     </div>
                   ) : (
                     <form onSubmit={handleSubmit(onSubmit)} className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                      <label className="flex items-center gap-3 rounded-md border border-gray-200 bg-white px-3 py-2 lg:col-span-2">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-gray-300 text-[#003F72] focus:ring-[#003F72]"
+                          {...register('details_match')}
+                        />
+                        <span className="text-sm font-semibold text-gray-700">
+                          All receipt details match the requisition
+                        </span>
+                      </label>
+
+                      {!detailsMatch && (
+                        <>
+                          <div>
+                            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
+                              Receipt Location
+                            </label>
+                            <input
+                              className={fieldClass}
+                              {...register('receipt_location', { required: 'Receipt location is required' })}
+                            />
+                            {errors.receipt_location && (
+                              <p className="mt-1 text-xs text-red-600">{errors.receipt_location.message}</p>
+                            )}
+                          </div>
+
+                          <div>
+                            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
+                              Receipt Structure Name
+                            </label>
+                            <input
+                              className={fieldClass}
+                              {...register('receipt_structure_name', { required: 'Receipt structure name is required' })}
+                            />
+                            {errors.receipt_structure_name && (
+                              <p className="mt-1 text-xs text-red-600">{errors.receipt_structure_name.message}</p>
+                            )}
+                          </div>
+
+                          <div>
+                            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
+                              Receipt Structure ID
+                            </label>
+                            <input
+                              className={fieldClass}
+                              {...register('receipt_structure_id', { required: 'Receipt structure ID is required' })}
+                            />
+                            {errors.receipt_structure_id && (
+                              <p className="mt-1 text-xs text-red-600">{errors.receipt_structure_id.message}</p>
+                            )}
+                          </div>
+
+                          <div>
+                            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
+                              Quantity Deposited Here (cum)
+                            </label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              className={fieldClass}
+                              {...register('deposited_qty', {
+                                required: 'Deposited quantity is required',
+                                min: { value: 0.01, message: 'Must be greater than 0' },
+                                max: {
+                                  value: selectedDispatch ? getRemainingQty(selectedDispatch) : 0,
+                                  message: 'Cannot exceed remaining vehicle quantity',
+                                },
+                                valueAsNumber: true,
+                              })}
+                            />
+                            {errors.deposited_qty && (
+                              <p className="mt-1 text-xs text-red-600">{errors.deposited_qty.message}</p>
+                            )}
+                          </div>
+                        </>
+                      )}
+
                       <div>
                         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
                           Receipt at site

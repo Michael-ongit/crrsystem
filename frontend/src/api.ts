@@ -14,9 +14,11 @@ import {
   TurnaroundTimeRecord,
 } from './types';
 
+const defaultApiBaseURL = 'http://127.0.0.1:8020';
+
 // Initialize Axios instance
 const apiClient: AxiosInstance = axios.create({
-  baseURL: 'http://localhost:8000',
+  baseURL: import.meta.env.VITE_API_BASE_URL || defaultApiBaseURL,
   timeout: 10000,
   headers: {
     'Content-Type': 'application/json',
@@ -226,8 +228,13 @@ export const productionAPI = {
       .then((res) => res.data),
 
   acknowledgeDispatch: (dispatchId: string, data: {
+    details_match: boolean;
     receipt_at_site_time: string;
     release_from_site_time: string;
+    deposited_qty?: number;
+    receipt_location?: string;
+    receipt_structure_name?: string;
+    receipt_structure_id?: string;
     remarks?: string;
   }): Promise<ProductionDispatch> =>
     apiClient

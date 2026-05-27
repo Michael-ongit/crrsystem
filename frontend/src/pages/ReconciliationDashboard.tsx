@@ -15,6 +15,7 @@ import {
 } from 'recharts';
 import { dashboardAPI } from '../api';
 import { DashboardSummary } from '../types';
+import CollapsibleTableSection from '../components/CollapsibleTableSection';
 import StatusBadge from '../components/StatusBadge';
 
 const tableHeaderClass = 'px-4 py-2 text-left text-sm font-semibold text-[#003F72]';
@@ -225,11 +226,7 @@ const ReconciliationDashboard: React.FC = () => {
 
       {/* Violations Table */}
       {dashboardData.violation_count > 0 && (
-        <div className="rounded-lg bg-white p-6 shadow transition-shadow duration-200 ease-out hover:shadow-md">
-          <h2 className="text-lg font-semibold text-gray-800 mb-4">
-            ACE Limit Violations
-          </h2>
-          <div className="overflow-x-auto">
+        <CollapsibleTableSection title="ACE Limit Violations">
             <table className="w-full">
               <thead className="bg-red-50 border-b">
                 <tr>
@@ -264,16 +261,11 @@ const ReconciliationDashboard: React.FC = () => {
                   ))}
               </tbody>
             </table>
-          </div>
-        </div>
+        </CollapsibleTableSection>
       )}
 
       {/* All Requisitions Table */}
-      <div className="rounded-lg bg-white p-6 shadow transition-shadow duration-200 ease-out hover:shadow-md">
-        <h2 className="text-lg font-semibold text-gray-800 mb-4">
-          All Requisitions ({dashboardData.wastage_records.length})
-        </h2>
-        <div className="overflow-x-auto">
+      <CollapsibleTableSection title={`All Requisitions (${dashboardData.wastage_records.length})`}>
           <table className="w-full">
             <thead className="bg-gray-100 border-b">
               <tr>
@@ -319,8 +311,7 @@ const ReconciliationDashboard: React.FC = () => {
               ))}
             </tbody>
           </table>
-        </div>
-      </div>
+      </CollapsibleTableSection>
     </div>
   );
 };

@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { productionAPI, requisitionAPI, userAPI } from '../api';
+import CollapsibleTableSection from '../components/CollapsibleTableSection';
 import PastRequisitionsModalButton from '../components/PastRequisitionsModalButton';
 import PastRequisitionsTable from '../components/PastRequisitionsTable';
 import RequisitionFilters, {
@@ -10,7 +11,17 @@ import RequisitionFilters, {
   formatOrderDate,
   RequisitionFilterState,
 } from '../components/RequisitionFilters';
-import RequisitionDetails from '../components/RequisitionDetails';
+import RequisitionFullDetails from '../components/RequisitionFullDetails';
+import { getRemainingQty, isDispatchFullyAllocated } from '../dispatchUtils';
+import {
+  combineISTDateTimeForApi,
+  dateTimeLocalInputToApi,
+  formatDateTimeIST,
+  parseApiDateTime,
+  toDateInputIST,
+  toDateTimeLocalInputIST,
+  toTimeInputIST,
+} from '../timeUtils';
 import { ConcreteRequisition, ProductionDispatch, RequisitionStatus } from '../types';
 
 interface DispatchFormData {
@@ -59,9 +70,7 @@ const numericTableHeaderClass = 'px-4 py-3 text-right text-xs font-bold uppercas
 const tableActionButtonClass =
   'rounded bg-[#003F72] px-3 py-1 text-sm font-semibold text-white shadow-sm transition-all duration-200 ease-out hover:bg-[#002B4E] hover:shadow';
 
-const today = () => new Date().toISOString().slice(0, 10);
-
-const combineDateTime = (date: string, time: string) => new Date(`${date}T${time}`).toISOString();
+const today = () => toDateInputIST();
 
 const display = (value: unknown) => {
   if (value === undefined || value === null || value === '') return '-';
@@ -89,16 +98,20 @@ const ProductionView: React.FC = () => {
   const [returning, setReturning] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [dispatchMessage, setDispatchMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const dispatchDraftStorageKey = 'productionDispatchDrafts';
+  const returnDraftStorageKey = 'productionReturnDrafts';
 
   const {
     register,
     handleSubmit,
+    watch,
+    getValues,
     formState: { errors },
     reset,
   } = useForm<DispatchFormData>({
     defaultValues: {
       batching_plant_id: '',
-      dispatch_time: new Date().toISOString().slice(0, 16),
+      dispatch_time: toDateTimeLocalInputIST(),
       receipt_location: '',
     },
   });
@@ -106,6 +119,7 @@ const ProductionView: React.FC = () => {
   const {
     register: registerReturn,
     handleSubmit: handleReturnSubmit,
+    watch: watchReturn,
     formState: { errors: returnErrors },
     reset: resetReturn,
   } = useForm<ReturnToPlantFormData>({
@@ -115,6 +129,26 @@ const ProductionView: React.FC = () => {
       remarks: '',
     },
   });
+
+  const readDispatchDrafts = (): Record<string, { form: DispatchFormData; vehicles: StagedDispatchVehicle[] }> => {
+    const rawDrafts = localStorage.getItem(dispatchDraftStorageKey);
+    return rawDrafts ? JSON.parse(rawDrafts) : {};
+  };
+
+  const writeDispatchDrafts = (
+    drafts: Record<string, { form: DispatchFormData; vehicles: StagedDispatchVehicle[] }>
+  ) => {
+    localStorage.setItem(dispatchDraftStorageKey, JSON.stringify(drafts));
+  };
+
+  const readReturnDrafts = (): Record<string, ReturnToPlantFormData> => {
+    const rawDrafts = localStorage.getItem(returnDraftStorageKey);
+    return rawDrafts ? JSON.parse(rawDrafts) : {};
+  };
+
+  const writeReturnDrafts = (drafts: Record<string, ReturnToPlantFormData>) => {
+    localStorage.setItem(returnDraftStorageKey, JSON.stringify(drafts));
+  };
 
   const fetchValidatedRequisitions = async () => {
     try {
@@ -131,8 +165,7 @@ const ProductionView: React.FC = () => {
         return acc;
       }, {});
       const returnReadyDispatches = dispatches.filter((dispatch) =>
-        dispatch.receipt_at_site_time &&
-        dispatch.release_from_site_time &&
+        isDispatchFullyAllocated(dispatch) &&
         !dispatch.return_to_plant_time
       );
       const returnReadyOrders = Array.from(
@@ -154,7 +187,9 @@ const ProductionView: React.FC = () => {
       ).map((order) => ({
         ...order,
         dispatches: order.dispatches.sort(
-          (a, b) => new Date(a.dispatch_time).getTime() - new Date(b.dispatch_time).getTime()
+          (a, b) =>
+            (parseApiDateTime(a.dispatch_time)?.getTime() || 0) -
+            (parseApiDateTime(b.dispatch_time)?.getTime() || 0)
         ),
       }));
       const returnReadySupplyIds = new Set(returnReadyOrders.map((order) => order.supply_id));
@@ -226,7 +261,7 @@ const ProductionView: React.FC = () => {
     const { requisition } = selectedReturnOrder;
     const dispatch = selectedReturnDispatch;
     return [
-      ['Date', requisition.requisition_date || new Date(requisition.req_date).toLocaleDateString()],
+      ['Date', formatOrderDate(requisition)],
       ['Supply ID', dispatch.supply_id],
       ['Location', requisition.location],
       ['In-Charge', userNames[requisition.in_charge_id] || requisition.in_charge_id],
@@ -238,27 +273,66 @@ const ProductionView: React.FC = () => {
       ['Batching Plant ID', dispatch.batching_plant_id],
       ['Vehicle Number', dispatch.tm_number],
       ['Quantity Dispatched', dispatch.actual_dispatched_qty],
-      ['Dispatch Time', new Date(dispatch.dispatch_time).toLocaleString()],
-      ['Receipt at Site', dispatch.receipt_at_site_time ? new Date(dispatch.receipt_at_site_time).toLocaleString() : '-'],
-      ['Release from Site', dispatch.release_from_site_time ? new Date(dispatch.release_from_site_time).toLocaleString() : '-'],
+      ['Remaining in Vehicle', getRemainingQty(dispatch)],
+      ['Dispatch Time', formatDateTimeIST(dispatch.dispatch_time)],
+      ['Receipt at Site', formatDateTimeIST(dispatch.receipt_at_site_time)],
+      ['Release from Site', formatDateTimeIST(dispatch.release_from_site_time)],
       ['Destination Location', dispatch.receipt_location],
     ] as Array<[string, unknown]>;
   }, [selectedReturnDispatch, selectedReturnOrder, userNames]);
 
+  useEffect(() => {
+    if (!selectedReturnDispatch) return undefined;
+
+    const subscription = watchReturn((value) => {
+      const drafts = readReturnDrafts();
+      drafts[selectedReturnDispatch.dispatch_id] = value as ReturnToPlantFormData;
+      writeReturnDrafts(drafts);
+    });
+
+    return () => subscription.unsubscribe();
+  }, [selectedReturnDispatch, watchReturn]);
+
   const openDispatch = (req: ConcreteRequisition) => {
+    const savedDraft = readDispatchDrafts()[req.supply_id];
     setSelectedRequisition(req);
-    setDispatchVehicles([]);
+    setDispatchVehicles(savedDraft?.vehicles || []);
     setSelectedDispatchVehicleId(null);
     setMessage(null);
     setDispatchMessage(null);
-    reset({
+    reset(savedDraft?.form || {
       batching_plant_id: '',
       tm_number: '',
       actual_dispatched_qty: Math.max(0, req.requested_qty - (dispatchTotals[req.supply_id] || 0)) || undefined,
-      dispatch_time: new Date().toISOString().slice(0, 16),
+      dispatch_time: toDateTimeLocalInputIST(),
       receipt_location: req.location,
     });
   };
+
+  useEffect(() => {
+    if (!selectedRequisition) return;
+    const drafts = readDispatchDrafts();
+    drafts[selectedRequisition.supply_id] = {
+      form: getValues(),
+      vehicles: dispatchVehicles,
+    };
+    writeDispatchDrafts(drafts);
+  }, [dispatchVehicles, selectedRequisition]);
+
+  useEffect(() => {
+    if (!selectedRequisition) return undefined;
+
+    const subscription = watch((value) => {
+      const drafts = readDispatchDrafts();
+      drafts[selectedRequisition.supply_id] = {
+        form: value as DispatchFormData,
+        vehicles: dispatchVehicles,
+      };
+      writeDispatchDrafts(drafts);
+    });
+
+    return () => subscription.unsubscribe();
+  }, [dispatchVehicles, selectedRequisition, watch]);
 
   const closeDispatch = async () => {
     setSelectedRequisition(null);
@@ -274,7 +348,7 @@ const ProductionView: React.FC = () => {
       batching_plant_id: '',
       tm_number: '',
       actual_dispatched_qty: remainingQty || undefined,
-      dispatch_time: new Date().toISOString().slice(0, 16),
+      dispatch_time: toDateTimeLocalInputIST(),
       receipt_location: selectedRequisition?.location || '',
     });
   };
@@ -341,7 +415,7 @@ const ProductionView: React.FC = () => {
         batching_plant_id: data.batching_plant_id,
         tm_number: '',
         actual_dispatched_qty: nextRemainingQty || undefined,
-        dispatch_time: new Date().toISOString().slice(0, 16),
+        dispatch_time: toDateTimeLocalInputIST(),
         receipt_location: data.receipt_location,
       });
     } catch (error: any) {
@@ -358,10 +432,11 @@ const ProductionView: React.FC = () => {
   const openReturnToPlant = (order: ReturnToPlantOrder) => {
     const firstDispatch = order.dispatches[0];
     if (!firstDispatch) return;
+    const savedDraft = readReturnDrafts()[firstDispatch.dispatch_id];
     setSelectedReturnOrder(order);
     setSelectedReturnDispatchId(firstDispatch.dispatch_id);
     setMessage(null);
-    resetReturn({
+    resetReturn(savedDraft || {
       return_to_plant_date: today(),
       return_to_plant_time: '',
       remarks: firstDispatch.remarks || '',
@@ -369,13 +444,14 @@ const ProductionView: React.FC = () => {
   };
 
   const selectReturnDispatch = (dispatch: ProductionDispatch) => {
+    const savedDraft = readReturnDrafts()[dispatch.dispatch_id];
     setSelectedReturnDispatchId(dispatch.dispatch_id);
-    resetReturn({
+    resetReturn(savedDraft || {
       return_to_plant_date: dispatch.return_to_plant_time
-        ? new Date(dispatch.return_to_plant_time).toISOString().slice(0, 10)
+        ? toDateInputIST(dispatch.return_to_plant_time)
         : today(),
       return_to_plant_time: dispatch.return_to_plant_time
-        ? new Date(dispatch.return_to_plant_time).toTimeString().slice(0, 5)
+        ? toTimeInputIST(dispatch.return_to_plant_time)
         : '',
       remarks: dispatch.remarks || '',
     });
@@ -389,7 +465,7 @@ const ProductionView: React.FC = () => {
 
     try {
       await productionAPI.updateReturnToPlant(selectedReturnDispatch.dispatch_id, {
-        return_to_plant_time: combineDateTime(data.return_to_plant_date, data.return_to_plant_time),
+        return_to_plant_time: combineISTDateTimeForApi(data.return_to_plant_date, data.return_to_plant_time),
         remarks: data.remarks || undefined,
       });
 
@@ -401,6 +477,9 @@ const ProductionView: React.FC = () => {
           ? 'Return to plant recorded. Requisition moved to past requisitions.'
           : `Return to plant recorded. ${remainingReturns} vehicle${remainingReturns === 1 ? '' : 's'} still pending return.`,
       });
+      const drafts = readReturnDrafts();
+      delete drafts[selectedReturnDispatch.dispatch_id];
+      writeReturnDrafts(drafts);
       setSelectedReturnOrder(null);
       setSelectedReturnDispatchId(null);
       await fetchValidatedRequisitions();
@@ -444,7 +523,7 @@ const ProductionView: React.FC = () => {
           batching_plant_id: vehicle.batching_plant_id,
           tm_number: vehicle.tm_number,
           actual_dispatched_qty: vehicle.actual_dispatched_qty,
-          dispatch_time: new Date(vehicle.dispatch_time).toISOString(),
+          dispatch_time: dateTimeLocalInputToApi(vehicle.dispatch_time),
           receipt_location: vehicle.receipt_location,
         });
       }
@@ -457,6 +536,9 @@ const ProductionView: React.FC = () => {
       setDispatchVehicles([]);
       setSelectedDispatchVehicleId(null);
       setDispatchMessage(null);
+      const drafts = readDispatchDrafts();
+      delete drafts[selectedRequisition.supply_id];
+      writeDispatchDrafts(drafts);
       await fetchValidatedRequisitions();
     } catch (error: any) {
       console.error('Dispatch finalization error:', error);
@@ -499,117 +581,105 @@ const ProductionView: React.FC = () => {
         </div>
       )}
 
-      <div className="overflow-hidden rounded-lg bg-white shadow-md transition-shadow duration-200 ease-out hover:shadow-lg">
-        <div className="bg-[#003F72] px-5 py-4 text-white">
-          <h2 className="text-xl font-semibold">Approved Orders ({filteredRequisitions.length})</h2>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[800px]">
-            <thead className="bg-gray-100">
-              <tr>
-                <th className={tableHeaderClass}>Supply ID</th>
-                <th className={tableHeaderClass}>Date</th>
-                <th className={tableHeaderClass}>Location</th>
-                <th className={tableHeaderClass}>Structure</th>
-                <th className={tableHeaderClass}>Grade</th>
-                <th className={numericTableHeaderClass}>Requested Qty</th>
-                <th className={numericTableHeaderClass}>Dispatched Qty</th>
-                <th className={tableHeaderClass}>Action</th>
+      <CollapsibleTableSection title={`Approved Orders (${filteredRequisitions.length})`}>
+        <table className="w-full min-w-[800px]">
+          <thead className="bg-gray-100">
+            <tr>
+              <th className={tableHeaderClass}>Supply ID</th>
+              <th className={tableHeaderClass}>Date</th>
+              <th className={tableHeaderClass}>Location</th>
+              <th className={tableHeaderClass}>Structure</th>
+              <th className={tableHeaderClass}>Grade</th>
+              <th className={numericTableHeaderClass}>Requested Qty</th>
+              <th className={numericTableHeaderClass}>Dispatched Qty</th>
+              <th className={tableHeaderClass}>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredRequisitions.map((req) => (
+              <tr key={req.supply_id} className="border-t border-gray-100 transition-colors duration-150 ease-out hover:bg-blue-50/45">
+                <td className="px-4 py-3 font-mono text-sm">{req.supply_id}</td>
+                <td className="px-4 py-3 text-sm">{formatOrderDate(req)}</td>
+                <td className="px-4 py-3 text-sm">{req.location}</td>
+                <td className="px-4 py-3 text-sm">{req.structure_name}</td>
+                <td className="px-4 py-3 text-sm">{req.grade}</td>
+                <td className="px-4 py-3 text-right text-sm">{req.requested_qty.toFixed(2)}</td>
+                <td className="px-4 py-3 text-right text-sm">{(dispatchTotals[req.supply_id] || 0).toFixed(2)}</td>
+                <td className="px-4 py-3">
+                  <button
+                    type="button"
+                    onClick={() => openDispatch(req)}
+                    className={tableActionButtonClass}
+                  >
+                    Dispatch
+                  </button>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {filteredRequisitions.map((req) => (
-                <tr key={req.supply_id} className="border-t border-gray-100 transition-colors duration-150 ease-out hover:bg-blue-50/45">
-                  <td className="px-4 py-3 font-mono text-sm">{req.supply_id}</td>
-                  <td className="px-4 py-3 text-sm">{formatOrderDate(req)}</td>
-                  <td className="px-4 py-3 text-sm">{req.location}</td>
-                  <td className="px-4 py-3 text-sm">{req.structure_name}</td>
-                  <td className="px-4 py-3 text-sm">{req.grade}</td>
-                  <td className="px-4 py-3 text-right text-sm">{req.requested_qty.toFixed(2)}</td>
-                  <td className="px-4 py-3 text-right text-sm">{(dispatchTotals[req.supply_id] || 0).toFixed(2)}</td>
-                  <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      onClick={() => openDispatch(req)}
-                      className={tableActionButtonClass}
-                    >
-                      Dispatch
-                    </button>
-                  </td>
-                </tr>
-              ))}
+            ))}
 
-              {filteredRequisitions.length === 0 && (
-                <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-500">
-                    No approved requisitions ready for dispatch
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="overflow-hidden rounded-lg bg-white shadow-md transition-shadow duration-200 ease-out hover:shadow-lg">
-        <div className="bg-[#003F72] px-5 py-4 text-white">
-          <h2 className="text-xl font-semibold">Return to Plant ({filteredReturnOrders.length})</h2>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[1060px]">
-            <thead className="bg-gray-100">
+            {filteredRequisitions.length === 0 && (
               <tr>
-                <th className={tableHeaderClass}>Supply ID</th>
-                <th className={tableHeaderClass}>Date</th>
-                <th className={tableHeaderClass}>Location</th>
-                <th className={tableHeaderClass}>Vehicles</th>
-                <th className={tableHeaderClass}>Plants</th>
-                <th className={numericTableHeaderClass}>Qty Dispatched</th>
-                <th className={tableHeaderClass}>Pending Return</th>
-                <th className={tableHeaderClass}>Action</th>
+                <td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-500">
+                  No approved requisitions ready for dispatch
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {filteredReturnOrders.map((order) => (
-                <tr key={order.supply_id} className="border-t border-gray-100 transition-colors duration-150 ease-out hover:bg-blue-50/45">
-                  <td className="px-4 py-3 font-mono text-sm">{order.supply_id}</td>
-                  <td className="px-4 py-3 text-sm">{formatOrderDate(order.requisition)}</td>
-                  <td className="px-4 py-3 text-sm">{order.requisition.location}</td>
-                  <td className="px-4 py-3 text-sm">
-                    {order.dispatches.map((dispatch) => dispatch.tm_number).join(', ')}
-                  </td>
-                  <td className="px-4 py-3 text-sm">
-                    {Array.from(new Set(order.dispatches.map((dispatch) => dispatch.batching_plant_id || '-'))).join(', ')}
-                  </td>
-                  <td className="px-4 py-3 text-right text-sm">
-                    {order.dispatches.reduce((total, dispatch) => total + dispatch.actual_dispatched_qty, 0).toFixed(2)}
-                  </td>
-                  <td className="px-4 py-3 text-sm">{order.dispatches.length}</td>
-                  <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      onClick={() => openReturnToPlant(order)}
-                      className={tableActionButtonClass}
-                    >
-                      Open
-                    </button>
-                  </td>
-                </tr>
-              ))}
+            )}
+          </tbody>
+        </table>
+      </CollapsibleTableSection>
 
-              {filteredReturnOrders.length === 0 && (
-                <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-500">
-                    No acknowledged dispatches waiting for return to plant
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <CollapsibleTableSection title={`Return to Plant (${filteredReturnOrders.length})`}>
+        <table className="w-full min-w-[1060px]">
+          <thead className="bg-gray-100">
+            <tr>
+              <th className={tableHeaderClass}>Supply ID</th>
+              <th className={tableHeaderClass}>Date</th>
+              <th className={tableHeaderClass}>Location</th>
+              <th className={tableHeaderClass}>Vehicles</th>
+              <th className={tableHeaderClass}>Plants</th>
+              <th className={numericTableHeaderClass}>Qty Dispatched</th>
+              <th className={tableHeaderClass}>Pending Return</th>
+              <th className={tableHeaderClass}>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredReturnOrders.map((order) => (
+              <tr key={order.supply_id} className="border-t border-gray-100 transition-colors duration-150 ease-out hover:bg-blue-50/45">
+                <td className="px-4 py-3 font-mono text-sm">{order.supply_id}</td>
+                <td className="px-4 py-3 text-sm">{formatOrderDate(order.requisition)}</td>
+                <td className="px-4 py-3 text-sm">{order.requisition.location}</td>
+                <td className="px-4 py-3 text-sm">
+                  {order.dispatches.map((dispatch) => dispatch.tm_number).join(', ')}
+                </td>
+                <td className="px-4 py-3 text-sm">
+                  {Array.from(new Set(order.dispatches.map((dispatch) => dispatch.batching_plant_id || '-'))).join(', ')}
+                </td>
+                <td className="px-4 py-3 text-right text-sm">
+                  {order.dispatches.reduce((total, dispatch) => total + dispatch.actual_dispatched_qty, 0).toFixed(2)}
+                </td>
+                <td className="px-4 py-3 text-sm">{order.dispatches.length}</td>
+                <td className="px-4 py-3">
+                  <button
+                    type="button"
+                    onClick={() => openReturnToPlant(order)}
+                    className={tableActionButtonClass}
+                  >
+                    Open
+                  </button>
+                </td>
+              </tr>
+            ))}
+
+            {filteredReturnOrders.length === 0 && (
+              <tr>
+                <td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-500">
+                  No acknowledged dispatches waiting for return to plant
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </CollapsibleTableSection>
 
       <PastRequisitionsTable requisitions={filteredHistory} onView={setViewingOrder} />
 
@@ -628,7 +698,7 @@ const ProductionView: React.FC = () => {
                 Close
               </button>
             </div>
-            <RequisitionDetails requisition={viewingOrder} />
+            <RequisitionFullDetails requisition={viewingOrder} />
           </div>
         </div>
       )}
@@ -707,7 +777,7 @@ const ProductionView: React.FC = () => {
                           </span>
                         </div>
                         <div className="mt-2 text-xs text-gray-600">
-                          <p>{new Date(vehicle.dispatch_time).toLocaleString()}</p>
+                          <p>{formatDateTimeIST(vehicle.dispatch_time)}</p>
                           <p className="truncate" title={vehicle.receipt_location || '-'}>
                             {vehicle.receipt_location || '-'}
                           </p>
@@ -731,7 +801,7 @@ const ProductionView: React.FC = () => {
                   </h3>
                   <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                     {([
-                      ['Date', selectedRequisition.requisition_date || new Date(selectedRequisition.req_date).toLocaleDateString()],
+                      ['Date', formatOrderDate(selectedRequisition)],
                       ['Supply ID', selectedRequisition.supply_id],
                       ['Location', selectedRequisition.location],
                       ['In-Charge', userNames[selectedRequisition.in_charge_id] || selectedRequisition.in_charge_id],

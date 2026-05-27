@@ -1,5 +1,7 @@
 import React from 'react';
 import { ConcreteRequisition } from '../types';
+import CollapsibleTableSection from './CollapsibleTableSection';
+import { formatOrderDate } from './RequisitionFilters';
 import StatusBadge from './StatusBadge';
 
 interface PastRequisitionsTableProps {
@@ -15,13 +17,7 @@ const PastRequisitionsTable: React.FC<PastRequisitionsTableProps> = ({
   emptyText = 'No ongoing requisitions found.',
   onView,
 }) => (
-  <div className="overflow-hidden rounded-lg bg-white shadow-md transition-shadow duration-200 ease-out hover:shadow-lg">
-    <div className="flex items-center bg-[#003F72] px-5 py-4 text-white">
-      <h2 className="text-xl font-semibold">
-        {title} ({requisitions.length})
-      </h2>
-    </div>
-    <div className="overflow-x-auto">
+  <CollapsibleTableSection title={`${title} (${requisitions.length})`}>
       <table className="w-full min-w-[860px]">
         <thead className="bg-gray-100">
           <tr>
@@ -39,7 +35,7 @@ const PastRequisitionsTable: React.FC<PastRequisitionsTableProps> = ({
           {requisitions.map((req) => (
             <tr key={req.supply_id} className="border-t border-gray-100 transition-colors duration-150 ease-out hover:bg-blue-50/45">
               <td className="px-4 py-3 font-mono text-sm">{req.supply_id}</td>
-              <td className="px-4 py-3 text-sm">{req.requisition_date || new Date(req.req_date).toLocaleDateString()}</td>
+              <td className="px-4 py-3 text-sm">{formatOrderDate(req)}</td>
               <td className="px-4 py-3 text-sm">{req.location}</td>
               <td className="px-4 py-3 text-sm">{req.structure_name}</td>
               <td className="px-4 py-3 text-sm">{req.grade}</td>
@@ -70,8 +66,7 @@ const PastRequisitionsTable: React.FC<PastRequisitionsTableProps> = ({
           )}
         </tbody>
       </table>
-    </div>
-  </div>
+  </CollapsibleTableSection>
 );
 
 export default PastRequisitionsTable;

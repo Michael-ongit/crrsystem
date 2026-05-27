@@ -1,20 +1,106 @@
 # routers/production.py - Production and dispatch endpoints
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from datetime import datetime
 from database import get_db
 from models import (
-    ProductionDispatch, ConcreteRequisition, RequisitionStatus, User, UserRole
+    ConcreteRequisition, DispatchReceiptAllocation, ProductionDispatch,
+    RequisitionStatus, User, UserRole
 )
 from . import auth
 from schemas import (
     DeliveryTimeUpdate, DispatchAcknowledgementUpdate, DispatchReconciliationUpdate,
     ProductionDispatchCreate, ProductionDispatchResponse, ReturnToPlantUpdate
 )
+from time_utils import now_ist, to_ist_naive
 import logging
 
 router = APIRouter(prefix="/production", tags=["Production"])
 logger = logging.getLogger(__name__)
+QUANTITY_EPSILON = 0.0001
+
+
+def _allocation_total(dispatch: ProductionDispatch) -> float:
+    allocations = getattr(dispatch, "receipt_allocations", None) or []
+    if allocations:
+        return round(sum(allocation.deposited_qty for allocation in allocations), 2)
+
+    if dispatch.receipt_at_site_time and dispatch.release_from_site_time:
+        return round(dispatch.actual_dispatched_qty, 2)
+
+    return 0.0
+
+
+def _attach_dispatch_quantities(dispatch: ProductionDispatch) -> ProductionDispatch:
+    allocated_qty = _allocation_total(dispatch)
+    dispatch.allocated_qty = allocated_qty
+    dispatch.remaining_qty = round(max(0.0, dispatch.actual_dispatched_qty - allocated_qty), 2)
+    return dispatch
+
+
+def _dispatch_fully_allocated(dispatch: ProductionDispatch) -> bool:
+    _attach_dispatch_quantities(dispatch)
+    return dispatch.remaining_qty <= QUANTITY_EPSILON
+
+
+def _dispatch_receipt_location(dispatch: ProductionDispatch) -> str | None:
+    allocations = getattr(dispatch, "receipt_allocations", None) or []
+    if not allocations:
+        return dispatch.receipt_location
+
+    locations = sorted({allocation.receipt_location for allocation in allocations if allocation.receipt_location})
+    if len(locations) == 1:
+        return locations[0]
+    return "Multiple locations"
+
+
+def _sync_dispatch_receipt_summary(dispatch: ProductionDispatch) -> None:
+    """Maintain legacy single-receipt columns from allocation rows for existing views."""
+    allocations = getattr(dispatch, "receipt_allocations", None) or []
+    if not allocations:
+        return
+
+    dispatch.delivery_time = min(allocation.receipt_at_site_time for allocation in allocations)
+    dispatch.receipt_location = _dispatch_receipt_location(dispatch)
+
+    if _dispatch_fully_allocated(dispatch):
+        dispatch.receipt_at_site_time = min(allocation.receipt_at_site_time for allocation in allocations)
+        dispatch.release_from_site_time = max(allocation.release_from_site_time for allocation in allocations)
+    else:
+        dispatch.receipt_at_site_time = None
+        dispatch.release_from_site_time = None
+
+
+def _dispatches_for_supply(db: Session, supply_id: str) -> list[ProductionDispatch]:
+    return (
+        db.query(ProductionDispatch)
+        .filter(ProductionDispatch.supply_id == supply_id)
+        .order_by(ProductionDispatch.dispatch_time.asc())
+        .all()
+    )
+
+
+def _update_requisition_workflow_status(
+    db: Session,
+    requisition: ConcreteRequisition | None,
+) -> None:
+    if not requisition:
+        return
+
+    dispatches = _dispatches_for_supply(db, requisition.supply_id)
+    total_dispatched_qty = sum(dispatch.actual_dispatched_qty for dispatch in dispatches)
+
+    if total_dispatched_qty < requisition.requested_qty - QUANTITY_EPSILON:
+        requisition.status = RequisitionStatus.VALIDATED
+    elif not dispatches:
+        requisition.status = RequisitionStatus.VALIDATED
+    elif not all(_dispatch_fully_allocated(dispatch) for dispatch in dispatches):
+        requisition.status = RequisitionStatus.DISPATCHED
+    elif any(dispatch.return_to_plant_time is None for dispatch in dispatches):
+        requisition.status = RequisitionStatus.RETURNING
+    else:
+        requisition.status = RequisitionStatus.RECONCILED
+
+    requisition.updated_at = now_ist()
 
 
 @router.post(
@@ -89,19 +175,14 @@ def create_dispatch(
             batching_plant_id=dispatch.batching_plant_id,
             tm_number=dispatch.tm_number,
             actual_dispatched_qty=dispatch.actual_dispatched_qty,
-            dispatch_time=dispatch.dispatch_time,
+            dispatch_time=to_ist_naive(dispatch.dispatch_time),
             receipt_location=dispatch.receipt_location,
-            delivery_time=dispatch.delivery_time,
+            delivery_time=to_ist_naive(dispatch.delivery_time),
             wastage_qty=wastage_qty
         )
-        
-        # Keep partially dispatched requisitions approved until the full quantity is dispatched.
-        requisition.status = (
-            RequisitionStatus.DISPATCHED
-            if cumulative_dispatched_qty >= requisition.requested_qty
-            else RequisitionStatus.VALIDATED
-        )
-        requisition.updated_at = datetime.utcnow()
+        db.add(db_dispatch)
+        db.flush()
+        _update_requisition_workflow_status(db, requisition)
         
         # Log ACE limit violations
         if wastage_percentage > 1.0:
@@ -110,7 +191,6 @@ def create_dispatch(
                 f"(limit: 1.0%). Requested: {requisition.requested_qty}, Dispatched: {cumulative_dispatched_qty}"
             )
         
-        db.add(db_dispatch)
         db.commit()
         db.refresh(db_dispatch)
         
@@ -118,7 +198,7 @@ def create_dispatch(
             f"Dispatch created: {dispatch.supply_id}, TM: {dispatch.tm_number}, "
             f"Wastage: {wastage_percentage:.2f}%"
         )
-        return db_dispatch
+        return _attach_dispatch_quantities(db_dispatch)
         
     except HTTPException:
         raise
@@ -153,7 +233,7 @@ def get_dispatches_by_supply(
         if not dispatches:
             logger.info(f"No dispatches found for supply_id: {supply_id}")
         
-        return dispatches
+        return [_attach_dispatch_quantities(dispatch) for dispatch in dispatches]
         
     except Exception as e:
         logger.error(f"Error fetching dispatches for {supply_id}: {e}")
@@ -184,7 +264,7 @@ def get_all_dispatches(
             ProductionDispatch.dispatch_time.desc()
         ).offset(skip).limit(limit).all()
         
-        return dispatches
+        return [_attach_dispatch_quantities(dispatch) for dispatch in dispatches]
         
     except Exception as e:
         logger.error(f"Error fetching all dispatches: {e}")
@@ -222,8 +302,8 @@ def update_delivery_time(
                 detail=f"Dispatch with id '{dispatch_id}' not found"
             )
         
-        dispatch.delivery_time = delivery_update.delivery_time
-        dispatch.updated_at = datetime.utcnow()
+        dispatch.delivery_time = to_ist_naive(delivery_update.delivery_time)
+        dispatch.updated_at = now_ist()
         
         # Calculate turnaround time
         if dispatch.dispatch_time and dispatch.delivery_time:
@@ -235,7 +315,7 @@ def update_delivery_time(
         db.commit()
         db.refresh(dispatch)
         
-        return dispatch
+        return _attach_dispatch_quantities(dispatch)
         
     except HTTPException:
         raise
@@ -276,28 +356,69 @@ def acknowledge_dispatch(
             ConcreteRequisition.supply_id == dispatch.supply_id
         ).first()
 
-        dispatch.receipt_at_site_time = acknowledgement.receipt_at_site_time
-        dispatch.release_from_site_time = acknowledgement.release_from_site_time
-        dispatch.delivery_time = acknowledgement.receipt_at_site_time
-        dispatch.remarks = acknowledgement.remarks
-        dispatch.updated_at = datetime.utcnow()
+        _attach_dispatch_quantities(dispatch)
+        remaining_qty = dispatch.remaining_qty
+        if remaining_qty <= QUANTITY_EPSILON:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This dispatch has already been fully acknowledged"
+            )
 
-        if requisition:
-            total_dispatched_qty = sum(
-                qty for (qty,) in db.query(ProductionDispatch.actual_dispatched_qty)
-                .filter(ProductionDispatch.supply_id == dispatch.supply_id)
-                .all()
+        if acknowledgement.details_match:
+            if not requisition:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Requisition with supply_id '{dispatch.supply_id}' not found"
+                )
+            deposited_qty = remaining_qty
+            receipt_location = requisition.location
+            receipt_structure_name = requisition.structure_name
+            receipt_structure_id = requisition.structure_id
+        else:
+            deposited_qty = round(float(acknowledgement.deposited_qty or 0), 2)
+            receipt_location = (acknowledgement.receipt_location or "").strip()
+            receipt_structure_name = (acknowledgement.receipt_structure_name or "").strip()
+            receipt_structure_id = (acknowledgement.receipt_structure_id or "").strip()
+
+        if deposited_qty <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Deposited quantity must be greater than zero"
             )
-            requisition.status = (
-                RequisitionStatus.RETURNING
-                if total_dispatched_qty >= requisition.requested_qty
-                else RequisitionStatus.VALIDATED
+
+        if deposited_qty > remaining_qty + QUANTITY_EPSILON:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Deposited quantity exceeds remaining dispatch quantity. "
+                    f"Remaining: {remaining_qty:.2f}, attempted: {deposited_qty:.2f}"
+                )
             )
-            requisition.updated_at = datetime.utcnow()
+
+        allocation = DispatchReceiptAllocation(
+            dispatch=dispatch,
+            deposited_qty=round(deposited_qty, 2),
+            receipt_location=receipt_location,
+            receipt_structure_name=receipt_structure_name,
+            receipt_structure_id=receipt_structure_id,
+            receipt_at_site_time=to_ist_naive(acknowledgement.receipt_at_site_time),
+            release_from_site_time=to_ist_naive(acknowledgement.release_from_site_time),
+            remarks=acknowledgement.remarks,
+        )
+
+        db.add(allocation)
+        db.flush()
+        db.refresh(dispatch)
+
+        if acknowledgement.remarks is not None:
+            dispatch.remarks = acknowledgement.remarks
+        dispatch.updated_at = now_ist()
+        _sync_dispatch_receipt_summary(dispatch)
+        _update_requisition_workflow_status(db, requisition)
 
         db.commit()
         db.refresh(dispatch)
-        return dispatch
+        return _attach_dispatch_quantities(dispatch)
 
     except HTTPException:
         raise
@@ -334,48 +455,26 @@ def update_return_to_plant(
                 detail=f"Dispatch with id '{dispatch_id}' not found"
             )
 
-        if not dispatch.receipt_at_site_time or not dispatch.release_from_site_time:
+        if not _dispatch_fully_allocated(dispatch):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Dispatch must be acknowledged at site before return to plant is recorded"
+                detail="Dispatch must be fully acknowledged at site before return to plant is recorded"
             )
 
         requisition = db.query(ConcreteRequisition).filter(
             ConcreteRequisition.supply_id == dispatch.supply_id
         ).first()
 
-        dispatch.return_to_plant_time = return_update.return_to_plant_time
+        dispatch.return_to_plant_time = to_ist_naive(return_update.return_to_plant_time)
         if return_update.remarks is not None:
             dispatch.remarks = return_update.remarks
-        dispatch.updated_at = datetime.utcnow()
+        dispatch.updated_at = now_ist()
         db.flush()
-
-        if requisition:
-            total_dispatched_qty = sum(
-                qty for (qty,) in db.query(ProductionDispatch.actual_dispatched_qty)
-                .filter(ProductionDispatch.supply_id == dispatch.supply_id)
-                .all()
-            )
-            pending_returns = (
-                db.query(ProductionDispatch)
-                .filter(
-                    ProductionDispatch.supply_id == dispatch.supply_id,
-                    ProductionDispatch.return_to_plant_time.is_(None),
-                )
-                .count()
-            )
-            requisition.status = (
-                RequisitionStatus.RECONCILED
-                if total_dispatched_qty >= requisition.requested_qty and pending_returns == 0
-                else RequisitionStatus.RETURNING
-                if total_dispatched_qty >= requisition.requested_qty
-                else RequisitionStatus.VALIDATED
-            )
-            requisition.updated_at = datetime.utcnow()
+        _update_requisition_workflow_status(db, requisition)
 
         db.commit()
         db.refresh(dispatch)
-        return dispatch
+        return _attach_dispatch_quantities(dispatch)
 
     except HTTPException:
         raise
@@ -416,20 +515,35 @@ def reconcile_dispatch(
             ConcreteRequisition.supply_id == dispatch.supply_id
         ).first()
 
-        dispatch.receipt_at_site_time = reconciliation.receipt_at_site_time
-        dispatch.release_from_site_time = reconciliation.release_from_site_time
-        dispatch.return_to_plant_time = reconciliation.return_to_plant_time
-        dispatch.remarks = reconciliation.remarks
-        dispatch.delivery_time = reconciliation.receipt_at_site_time
-        dispatch.updated_at = datetime.utcnow()
+        _attach_dispatch_quantities(dispatch)
+        if dispatch.remaining_qty > QUANTITY_EPSILON:
+            if not requisition:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Requisition with supply_id '{dispatch.supply_id}' not found"
+                )
+            allocation = DispatchReceiptAllocation(
+                dispatch=dispatch,
+                deposited_qty=dispatch.remaining_qty,
+                receipt_location=requisition.location,
+                receipt_structure_name=requisition.structure_name,
+                receipt_structure_id=requisition.structure_id,
+                receipt_at_site_time=to_ist_naive(reconciliation.receipt_at_site_time),
+                release_from_site_time=to_ist_naive(reconciliation.release_from_site_time),
+                remarks=reconciliation.remarks,
+            )
+            db.add(allocation)
+            db.flush()
 
-        if requisition:
-            requisition.status = RequisitionStatus.RECONCILED
-            requisition.updated_at = datetime.utcnow()
+        dispatch.return_to_plant_time = to_ist_naive(reconciliation.return_to_plant_time)
+        dispatch.remarks = reconciliation.remarks
+        dispatch.updated_at = now_ist()
+        _sync_dispatch_receipt_summary(dispatch)
+        _update_requisition_workflow_status(db, requisition)
 
         db.commit()
         db.refresh(dispatch)
-        return dispatch
+        return _attach_dispatch_quantities(dispatch)
 
     except HTTPException:
         raise

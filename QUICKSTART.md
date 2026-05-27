@@ -47,11 +47,11 @@ DATABASE_PASSWORD=YourPassword
 
 ### Start Backend (in same terminal):
 ```bash
-python -m uvicorn main:app --reload
+python -m uvicorn main:app --reload --host 127.0.0.1 --port 8020
 ```
 
-✅ **Backend running at:** http://localhost:8000
-✅ **API Docs at:** http://localhost:8000/docs
+✅ **Backend running at:** http://localhost:8020
+✅ **API Docs at:** http://localhost:8020/docs
 
 ---
 
@@ -65,13 +65,13 @@ npm install
 npm run dev
 ```
 
-✅ **Frontend running at:** http://localhost:5173
+✅ **Frontend running at:** http://localhost:5090
 
 ---
 
 ## 🎬 That's It!
 
-Open your browser: **http://localhost:5173**
+Open your browser: **http://localhost:5090**
 
 ### Demo Features:
 1. **Execution View** - Create concrete requisitions
@@ -121,8 +121,8 @@ python -c "from database import init_db; init_db()"
 
 ### Frontend shows "Cannot connect to API"?
 ```bash
-# Verify backend is running on port 8000
-netstat -ano | findstr :8000
+# Verify backend is running on port 8020
+netstat -ano | findstr :8020
 
 # Check CORS in backend/config.py
 ```

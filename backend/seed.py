@@ -11,15 +11,26 @@ standard library. Both paths produce the same normalized records for the
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime, timedelta
 import logging
 import re
 import zipfile
 import xml.etree.ElementTree as ET
 
 from sqlalchemy.orm import Session
+from time_utils import now_ist
 
 from database import SessionLocal
-from models import RequisitionElement
+from models import (
+    ConcreteRequisition,
+    DispatchReceiptAllocation,
+    PlanningValidation,
+    ProductionDispatch,
+    RequisitionElement,
+    RequisitionStatus,
+    User,
+    UserRole,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -220,6 +231,258 @@ def seed_reference_data(db: Session | None = None, clear_existing: bool = True) 
     except Exception:
         session.rollback()
         logger.exception("Failed to seed requisition reference data")
+        raise
+    finally:
+        if owns_session:
+            session.close()
+
+
+def _demo_users(session: Session) -> dict[str, User]:
+    """Create or reuse predictable users for local workflow simulation."""
+    from routers.auth import hash_password
+
+    users = {
+        "execution": ("Execution Demo", "execution.demo@mvdp.local", UserRole.EXECUTION),
+        "planning": ("Planning Demo", "planning.demo@mvdp.local", UserRole.PLANNING),
+        "production": ("Production Demo", "production.demo@mvdp.local", UserRole.PRODUCTION),
+        "admin": ("Admin Demo", "admin.demo@mvdp.local", UserRole.ADMIN),
+    }
+    created: dict[str, User] = {}
+    for key, (name, email, role) in users.items():
+        user = session.query(User).filter(User.email == email).one_or_none()
+        if user is None:
+            user = User(
+                name=name,
+                email=email,
+                role=role,
+                password_hash=hash_password("DemoPass123"),
+                is_email_verified=True,
+            )
+            session.add(user)
+            session.flush()
+        created[key] = user
+    return created
+
+
+def _demo_reference_rows(session: Session, count: int) -> list[RequisitionElement]:
+    rows = (
+        session.query(RequisitionElement)
+        .filter(RequisitionElement.structure_id.isnot(None))
+        .order_by(RequisitionElement.id.asc())
+        .limit(count)
+        .all()
+    )
+    if rows:
+        return rows
+
+    fallback = [
+        RequisitionElement(
+            location="Gorai IC",
+            structure_type="Permanent",
+            structure_name="Pile",
+            structure_id=f"VGP{number}",
+            element_id=f"P{number}",
+        )
+        for number in range(1, count + 1)
+    ]
+    session.add_all(fallback)
+    session.flush()
+    return fallback
+
+
+def _add_validation(
+    session: Session,
+    supply_id: str,
+    user_id: str,
+    decision: str,
+    remarks: str,
+    at_time: datetime,
+) -> None:
+    session.add(
+        PlanningValidation(
+            supply_id=supply_id,
+            validated_by=user_id,
+            planning_remarks=remarks,
+            is_approved=decision,
+            validation_timestamp=at_time,
+        )
+    )
+
+
+def _add_dispatch(
+    session: Session,
+    supply_id: str,
+    plant: str,
+    tm: str,
+    qty: float,
+    dispatch_time: datetime,
+    receipt_location: str,
+    allocations: list[dict[str, object]] | None = None,
+    returned_at: datetime | None = None,
+) -> ProductionDispatch:
+    dispatch = ProductionDispatch(
+        supply_id=supply_id,
+        batching_plant_id=plant,
+        tm_number=tm,
+        actual_dispatched_qty=qty,
+        dispatch_time=dispatch_time,
+        receipt_location=receipt_location,
+        wastage_qty=0,
+    )
+    session.add(dispatch)
+    session.flush()
+
+    for allocation_data in allocations or []:
+        allocation = DispatchReceiptAllocation(
+            dispatch_id=dispatch.dispatch_id,
+            deposited_qty=float(allocation_data["qty"]),
+            receipt_location=str(allocation_data["location"]),
+            receipt_structure_name=str(allocation_data["structure_name"]),
+            receipt_structure_id=str(allocation_data["structure_id"]),
+            receipt_at_site_time=allocation_data["receipt_at"],
+            release_from_site_time=allocation_data["release_at"],
+            remarks=str(allocation_data.get("remarks") or ""),
+        )
+        session.add(allocation)
+
+    if allocations:
+        dispatch.delivery_time = min(item["receipt_at"] for item in allocations)
+        allocated_qty = sum(float(item["qty"]) for item in allocations)
+        if allocated_qty >= qty:
+            dispatch.receipt_at_site_time = min(item["receipt_at"] for item in allocations)
+            dispatch.release_from_site_time = max(item["release_at"] for item in allocations)
+        dispatch.remarks = "Demo receipt allocation"
+
+    if returned_at:
+        dispatch.return_to_plant_time = returned_at
+
+    return dispatch
+
+
+def seed_sample_data(db: Session | None = None) -> int:
+    """
+    Seed 12 realistic demo requisitions across the complete workflow.
+
+    The seed is intentionally idempotent at the database level by only inserting
+    when called from ``init_db`` against an empty requisition table.
+    """
+    owns_session = db is None
+    session = db or SessionLocal()
+    try:
+        users = _demo_users(session)
+        refs = _demo_reference_rows(session, 12)
+        now = now_ist().replace(microsecond=0)
+        grades = ["M-45", "M-50", "M-40", "M-30"]
+        placements = ["Boom placer", "Line pump", "Direct chute", "Concrete bucket"]
+        stage_data = [
+            ("Pending", RequisitionStatus.PENDING, None, []),
+            ("Sent Back", RequisitionStatus.PENDING, "Sent Back", []),
+            ("Approved A", RequisitionStatus.VALIDATED, "Approved", []),
+            ("Approved B", RequisitionStatus.VALIDATED, "Approved", []),
+            ("Partial Dispatch", RequisitionStatus.VALIDATED, "Approved", [{"qty_ratio": 0.55, "allocated": []}]),
+            ("Awaiting Ack", RequisitionStatus.DISPATCHED, "Approved", [{"qty_ratio": 1.0, "allocated": []}]),
+            ("Partial Ack", RequisitionStatus.DISPATCHED, "Approved", [{"qty_ratio": 1.0, "allocated": [0.45]}]),
+            ("Return Ready", RequisitionStatus.RETURNING, "Approved", [{"qty_ratio": 1.0, "allocated": [1.0]}]),
+            ("Two TM Return", RequisitionStatus.RETURNING, "Approved", [{"qty_ratio": 0.55, "allocated": [1.0], "returned": True}, {"qty_ratio": 0.45, "allocated": [1.0]}]),
+            ("Reconciled A", RequisitionStatus.RECONCILED, "Approved", [{"qty_ratio": 1.0, "allocated": [1.0], "returned": True}]),
+            ("Split Used", RequisitionStatus.RECONCILED, "Approved", [{"qty_ratio": 1.0, "allocated": [0.58, 0.42], "returned": True}]),
+            ("Reconciled B", RequisitionStatus.RECONCILED, "Approved", [{"qty_ratio": 1.0, "allocated": [1.0], "returned": True}]),
+        ]
+
+        for index, (label, req_status, decision, dispatch_specs) in enumerate(stage_data, start=1):
+            ref = refs[index - 1]
+            requested_qty = round(8.0 + (index % 5) * 2.5, 2)
+            created_at = now - timedelta(days=14 - index, hours=index)
+            supply_id = f"MVDP-DEMO-{index:03d}"
+            requisition = ConcreteRequisition(
+                supply_id=supply_id,
+                req_date=created_at,
+                rfi_no=f"RFI-DEMO-{index:03d}",
+                requisition_date=created_at.date().isoformat(),
+                location=ref.location,
+                in_charge_id=users["execution"].id,
+                structure_type=ref.structure_type,
+                structure_name=ref.structure_name,
+                structure_id=ref.structure_id,
+                pile_lift_id=ref.element_id,
+                grade=grades[index % len(grades)],
+                drawing_no=f"DWG-MVDP-{index:03d}",
+                drawing_length=round(10 + index * 0.75, 2),
+                drawing_diameter=round(1.2 + (index % 3) * 0.1, 2),
+                theoretical_qty=requested_qty,
+                actual_length=round(10.1 + index * 0.7, 2),
+                actual_diameter=round(1.2 + (index % 2) * 0.1, 2),
+                actual_qty=round(requested_qty - 0.15, 2),
+                qty_difference=0.15,
+                difference_reason="Demo variation for site measurement",
+                requested_qty=requested_qty,
+                pour_time=f"{8 + index % 8:02d}:30",
+                placement_by=placements[index % len(placements)],
+                contact_person=f"Site Engineer {index}",
+                contact_number=f"90000010{index:02d}",
+                status=req_status,
+                created_at=created_at,
+                updated_at=created_at,
+            )
+            session.add(requisition)
+            session.flush()
+
+            if decision:
+                remarks = (
+                    "Demo sent back: clarify pour sequence and quantity"
+                    if decision == "Sent Back"
+                    else f"Demo approved for {label.lower()} workflow"
+                )
+                _add_validation(
+                    session,
+                    supply_id,
+                    users["planning"].id,
+                    decision,
+                    remarks,
+                    created_at + timedelta(hours=2),
+                )
+
+            for dispatch_index, spec in enumerate(dispatch_specs, start=1):
+                qty = round(requested_qty * float(spec.get("qty_ratio", 1.0)), 2)
+                dispatch_time = created_at + timedelta(hours=5 + dispatch_index)
+                allocation_payloads = []
+                for allocation_index, allocation_qty in enumerate(spec.get("allocated", []), start=1):
+                    deposited_qty = round(qty * float(allocation_qty), 2)
+                    target_ref = refs[(index + allocation_index) % len(refs)]
+                    receipt_at = dispatch_time + timedelta(minutes=45 + allocation_index * 10)
+                    allocation_payloads.append(
+                        {
+                            "qty": deposited_qty,
+                            "location": target_ref.location,
+                            "structure_name": target_ref.structure_name,
+                            "structure_id": target_ref.structure_id,
+                            "receipt_at": receipt_at,
+                            "release_at": receipt_at + timedelta(minutes=35),
+                            "remarks": "Demo concrete deposited at site",
+                        }
+                    )
+                returned_at = (
+                    dispatch_time + timedelta(hours=3)
+                    if spec.get("returned")
+                    else None
+                )
+                _add_dispatch(
+                    session,
+                    supply_id,
+                    plant=f"BP-{1 + index % 3}",
+                    tm=f"TM-DEMO-{index:02d}-{dispatch_index}",
+                    qty=qty,
+                    dispatch_time=dispatch_time,
+                    receipt_location=ref.location,
+                    allocations=allocation_payloads,
+                    returned_at=returned_at,
+                )
+
+        session.commit()
+        return len(stage_data)
+    except Exception:
+        session.rollback()
+        logger.exception("Failed to seed sample data")
         raise
     finally:
         if owns_session:

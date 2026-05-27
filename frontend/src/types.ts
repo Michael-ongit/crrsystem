@@ -111,6 +111,20 @@ export interface PlanningValidation {
   is_approved: 'Approved' | 'Sent Back' | 'Pending' | 'Rejected';
 }
 
+export interface DispatchReceiptAllocation {
+  allocation_id: string;
+  dispatch_id: string;
+  deposited_qty: number;
+  receipt_location: string;
+  receipt_structure_name: string;
+  receipt_structure_id: string;
+  receipt_at_site_time: string;
+  release_from_site_time: string;
+  remarks?: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ProductionDispatch {
   dispatch_id: string;
   supply_id: string;
@@ -125,6 +139,9 @@ export interface ProductionDispatch {
   return_to_plant_time?: string;
   remarks?: string;
   wastage_qty?: number;
+  receipt_allocations?: DispatchReceiptAllocation[];
+  allocated_qty?: number;
+  remaining_qty?: number;
   created_at: string;
   updated_at: string;
 }
