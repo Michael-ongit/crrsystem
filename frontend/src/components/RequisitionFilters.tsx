@@ -21,11 +21,22 @@ export type RequisitionSearchField =
   | 'approval_status'
   | 'planning_remarks'
   | 'contact_person';
+export type RequisitionSortField =
+  | 'requisition_date'
+  | 'supply_id'
+  | 'location'
+  | 'structure_name'
+  | 'grade'
+  | 'requested_qty'
+  | 'status'
+  | 'placed_by_name';
 
 export interface RequisitionFilterState {
   dateRange: DateRangeFilter;
   searchField: RequisitionSearchField;
   searchTerm: string;
+  sortField: RequisitionSortField;
+  sortDirection: 'asc' | 'desc';
   customFrom: string;
   customTo: string;
 }
@@ -42,6 +53,8 @@ export const defaultRequisitionFilters: RequisitionFilterState = {
   dateRange: 'all',
   searchField: 'all',
   searchTerm: '',
+  sortField: 'requisition_date',
+  sortDirection: 'desc',
   customFrom: '',
   customTo: '',
 };
@@ -111,6 +124,14 @@ const fieldValue = (requisition: ConcreteRequisition, field: ConcreteSearchField
   return String(values[field] || '').toLowerCase();
 };
 
+const sortValue = (requisition: ConcreteRequisition, field: RequisitionSortField) => {
+  if (field === 'requisition_date') return getOrderDate(requisition)?.getTime() || 0;
+  if (field === 'requested_qty') return requisition.requested_qty || 0;
+  if (field === 'status') return requisition.status === 'Validated' ? 'Approved' : requisition.status;
+  if (field === 'placed_by_name') return requisition.placed_by_name || requisition.placed_by_email || '';
+  return String(requisition[field] || '');
+};
+
 export const filterRequisitions = (
   requisitions: ConcreteRequisition[],
   filters: RequisitionFilterState
@@ -175,23 +196,30 @@ export const filterRequisitions = (
       return searchTerms.some((term) => value === term);
     }
     return searchTerms.some((term) => value.includes(term));
+  }).sort((left, right) => {
+    const leftValue = sortValue(left, filters.sortField);
+    const rightValue = sortValue(right, filters.sortField);
+    const comparison = typeof leftValue === 'number' && typeof rightValue === 'number'
+      ? leftValue - rightValue
+      : String(leftValue).localeCompare(String(rightValue), undefined, { numeric: true });
+    return filters.sortDirection === 'asc' ? comparison : -comparison;
   });
 };
 
 const selectClassNames = {
   control: (state: any) =>
-    `min-h-[38px] rounded-md border bg-white text-sm shadow-sm ${
-      state.isFocused ? 'border-[#003F72] ring-2 ring-[#003F72]/15' : 'border-gray-300'
+    `min-h-[32px] rounded-md border bg-white text-xs shadow-sm ${
+      state.isFocused ? 'border-[#134377] ring-2 ring-[#134377]/15' : 'border-gray-300'
     }`,
   valueContainer: () => 'px-2',
-  input: () => 'text-sm text-gray-900',
-  placeholder: () => 'text-sm text-gray-400',
-  multiValue: () => 'rounded bg-[#003F72]/10',
-  multiValueLabel: () => 'text-xs text-[#003F72]',
+  input: () => 'text-xs text-gray-900',
+  placeholder: () => 'text-xs text-gray-400',
+  multiValue: () => 'rounded bg-[#134377]/10',
+  multiValueLabel: () => 'text-xs text-[#134377]',
   menu: () => 'z-50 rounded-md border border-gray-200 bg-white text-sm shadow-lg',
   option: (state: any) =>
     `cursor-pointer px-3 py-2 ${
-      state.isSelected ? 'bg-[#003F72] text-white' : state.isFocused ? 'bg-[#003F72]/10 text-gray-900' : 'text-gray-900'
+      state.isSelected ? 'bg-[#134377] text-white' : state.isFocused ? 'bg-[#134377]/10 text-gray-900' : 'text-gray-900'
     }`,
 };
 
@@ -258,14 +286,14 @@ const RequisitionFilters: React.FC<RequisitionFiltersProps> = ({
   }, [filters.searchField, isCategorical]);
 
   return (
-  <div className={`w-full rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm transition-shadow duration-200 ease-out hover:shadow-md xl:w-fit ${className}`}>
-    <div className="grid grid-cols-1 gap-3 xl:grid-cols-[150px_170px_220px_max-content] xl:items-end">
+  <div className={`w-full rounded-md border border-gray-200 bg-white px-3 py-2 shadow-sm transition-shadow duration-200 ease-out hover:shadow-md xl:w-fit ${className}`}>
+    <div className="grid grid-cols-1 gap-2 xl:grid-cols-[128px_145px_180px_132px_104px_max-content] xl:items-end">
       <label className="block">
-        <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">Date Range</span>
+        <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-gray-600">Date Range</span>
         <select
           value={filters.dateRange}
           onChange={(event) => onChange({ ...filters, dateRange: event.target.value as DateRangeFilter })}
-          className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-[#003F72] focus:ring-2 focus:ring-[#003F72]/15"
+          className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs focus:border-[#134377] focus:ring-2 focus:ring-[#134377]/15"
         >
           <option value="all">All orders</option>
           <option value="7">Past 7 days</option>
@@ -277,11 +305,11 @@ const RequisitionFilters: React.FC<RequisitionFiltersProps> = ({
       </label>
 
       <label className="block">
-        <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">Search By</span>
+        <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-gray-600">Search By</span>
         <select
           value={filters.searchField}
           onChange={(event) => onChange({ ...filters, searchField: event.target.value as RequisitionSearchField, searchTerm: '' })}
-          className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-[#003F72] focus:ring-2 focus:ring-[#003F72]/15"
+          className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs focus:border-[#134377] focus:ring-2 focus:ring-[#134377]/15"
         >
           <option value="all">Any datapoint</option>
           <option value="supply_id">Supply ID</option>
@@ -301,7 +329,7 @@ const RequisitionFilters: React.FC<RequisitionFiltersProps> = ({
       </label>
 
       <label className="block">
-        <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">Search</span>
+        <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-gray-600">Search</span>
         {isCategorical ? (
           <Select
             classNames={selectClassNames}
@@ -322,7 +350,7 @@ const RequisitionFilters: React.FC<RequisitionFiltersProps> = ({
           <select
             value={filters.searchTerm}
             onChange={(event) => onChange({ ...filters, searchTerm: event.target.value })}
-            className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-[#003F72] focus:ring-2 focus:ring-[#003F72]/15"
+            className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs focus:border-[#134377] focus:ring-2 focus:ring-[#134377]/15"
           >
             <option value=""></option>
             {staticOptions.map((option) => (
@@ -336,7 +364,7 @@ const RequisitionFilters: React.FC<RequisitionFiltersProps> = ({
             type="date"
             value={filters.searchTerm}
             onChange={(event) => onChange({ ...filters, searchTerm: event.target.value })}
-            className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-[#003F72] focus:ring-2 focus:ring-[#003F72]/15"
+            className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs focus:border-[#134377] focus:ring-2 focus:ring-[#134377]/15"
           />
         ) : isNumberSearch ? (
           <input
@@ -344,19 +372,49 @@ const RequisitionFilters: React.FC<RequisitionFiltersProps> = ({
             step="0.01"
             value={filters.searchTerm}
             onChange={(event) => onChange({ ...filters, searchTerm: event.target.value })}
-            className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-[#003F72] focus:ring-2 focus:ring-[#003F72]/15"
+            className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs focus:border-[#134377] focus:ring-2 focus:ring-[#134377]/15"
           />
         ) : (
           <input
             value={filters.searchTerm}
             onChange={(event) => onChange({ ...filters, searchTerm: event.target.value })}
             placeholder=""
-            className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-[#003F72] focus:ring-2 focus:ring-[#003F72]/15"
+            className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs focus:border-[#134377] focus:ring-2 focus:ring-[#134377]/15"
           />
         )}
       </label>
 
-      <div className="whitespace-nowrap pb-2 text-sm font-semibold text-gray-600">
+      <label className="block">
+        <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-gray-600">Sort By</span>
+        <select
+          value={filters.sortField}
+          onChange={(event) => onChange({ ...filters, sortField: event.target.value as RequisitionSortField })}
+          className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs focus:border-[#134377] focus:ring-2 focus:ring-[#134377]/15"
+        >
+          <option value="requisition_date">Date</option>
+          <option value="supply_id">Supply ID</option>
+          <option value="location">Location</option>
+          <option value="structure_name">Structure</option>
+          <option value="grade">Grade</option>
+          <option value="requested_qty">Quantity</option>
+          <option value="status">Status</option>
+          <option value="placed_by_name">Ordered By</option>
+        </select>
+      </label>
+
+      <label className="block">
+        <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-gray-600">Direction</span>
+        <select
+          value={filters.sortDirection}
+          onChange={(event) => onChange({ ...filters, sortDirection: event.target.value as 'asc' | 'desc' })}
+          className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs focus:border-[#134377] focus:ring-2 focus:ring-[#134377]/15"
+        >
+          <option value="desc">Descending</option>
+          <option value="asc">Ascending</option>
+        </select>
+      </label>
+
+      <div className="whitespace-nowrap pb-1.5 text-xs font-semibold text-gray-600">
         {resultCount} of {totalCount}
       </div>
     </div>
@@ -364,22 +422,22 @@ const RequisitionFilters: React.FC<RequisitionFiltersProps> = ({
     {filters.dateRange === 'custom' && (
       <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
         <label className="block">
-          <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">From</span>
+          <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-gray-600">From</span>
           <input
             type="date"
             value={filters.customFrom}
             onChange={(event) => onChange({ ...filters, customFrom: event.target.value })}
-            className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-[#003F72] focus:ring-2 focus:ring-[#003F72]/15"
+            className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs focus:border-[#134377] focus:ring-2 focus:ring-[#134377]/15"
           />
         </label>
 
         <label className="block">
-          <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">To</span>
+          <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-gray-600">To</span>
           <input
             type="date"
             value={filters.customTo}
             onChange={(event) => onChange({ ...filters, customTo: event.target.value })}
-            className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-[#003F72] focus:ring-2 focus:ring-[#003F72]/15"
+            className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs focus:border-[#134377] focus:ring-2 focus:ring-[#134377]/15"
           />
         </label>
       </div>

@@ -48,13 +48,37 @@ class User(Base):
     email = Column(String(255), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=True)
     is_email_verified = Column(Boolean, nullable=False, default=False)
+    assigned_locations_raw = Column("assigned_locations", String(2000), nullable=True)
     last_login_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=now_ist)
     
     # Relationships
-    requisitions = relationship("ConcreteRequisition", back_populates="in_charge")
+    requisitions = relationship(
+        "ConcreteRequisition",
+        back_populates="in_charge",
+        foreign_keys="ConcreteRequisition.in_charge_id",
+    )
     validations = relationship("PlanningValidation", back_populates="validator")
     sessions = relationship("AuthSession", back_populates="user")
+
+    @property
+    def assigned_locations(self) -> list[str]:
+        if not self.assigned_locations_raw:
+            return []
+        return [
+            location.strip()
+            for location in self.assigned_locations_raw.split(",")
+            if location.strip()
+        ]
+
+    @assigned_locations.setter
+    def assigned_locations(self, locations: list[str] | None) -> None:
+        normalized = []
+        for location in locations or []:
+            location = location.strip()
+            if location and location.lower() not in {item.lower() for item in normalized}:
+                normalized.append(location)
+        self.assigned_locations_raw = ",".join(normalized) if normalized else None
     
     def __repr__(self):
         return f"<User(id={self.id}, name={self.name}, role={self.role})>"
@@ -86,11 +110,31 @@ class RegistrationInvite(Base):
         nullable=False,
         default=UserRole.EXECUTION,
     )
+    assigned_locations_raw = Column("assigned_locations", String(2000), nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
     registered_user_id = Column(UUID_COLUMN, ForeignKey("users.id"), nullable=True)
     registered_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=now_ist)
     updated_at = Column(DateTime, nullable=False, default=now_ist, onupdate=now_ist)
+
+    @property
+    def assigned_locations(self) -> list[str]:
+        if not self.assigned_locations_raw:
+            return []
+        return [
+            location.strip()
+            for location in self.assigned_locations_raw.split(",")
+            if location.strip()
+        ]
+
+    @assigned_locations.setter
+    def assigned_locations(self, locations: list[str] | None) -> None:
+        normalized = []
+        for location in locations or []:
+            location = location.strip()
+            if location and location.lower() not in {item.lower() for item in normalized}:
+                normalized.append(location)
+        self.assigned_locations_raw = ",".join(normalized) if normalized else None
 
 
 class DropdownOption(Base):
@@ -171,6 +215,9 @@ class ConcreteRequisition(Base):
     in_charge_id = Column(UUID_COLUMN, ForeignKey("users.id"), nullable=False)
     in_charge_name = Column(String(255), nullable=True)
     selected_in_charge = Column(String(255), nullable=True)
+    placed_by_id = Column(UUID_COLUMN, ForeignKey("users.id"), nullable=True, index=True)
+    placed_by_name = Column(String(255), nullable=True)
+    placed_by_email = Column(String(255), nullable=True)
     structure_name = Column(String(255), nullable=False)
     structure_id = Column(String(50), nullable=False, index=True)
     rfi_no = Column(String(100), nullable=True)
@@ -201,7 +248,12 @@ class ConcreteRequisition(Base):
     updated_at = Column(DateTime, nullable=False, default=now_ist, onupdate=now_ist)
     
     # Relationships
-    in_charge = relationship("User", back_populates="requisitions")
+    in_charge = relationship(
+        "User",
+        back_populates="requisitions",
+        foreign_keys=[in_charge_id],
+    )
+    placed_by = relationship("User", foreign_keys=[placed_by_id])
     planning_validation = relationship("PlanningValidation", back_populates="requisition", uselist=False)
     dispatch_logs = relationship("ProductionDispatch", back_populates="requisition")
     
@@ -256,6 +308,10 @@ class ProductionDispatch(Base):
     wastage_qty = Column(Float, nullable=True)  # Calculated: requested_qty - actual_dispatched_qty
     returned_wastage_qty = Column(Float, nullable=False, default=0)
     remaining_concrete_disposition = Column(String(50), nullable=True)
+    pending_secondary_qty = Column(Float, nullable=False, default=0)
+    pending_secondary_receipt_location = Column(String(500), nullable=True)
+    pending_secondary_receipt_structure_name = Column(String(255), nullable=True)
+    pending_secondary_receipt_structure_id = Column(String(50), nullable=True)
     created_at = Column(DateTime, nullable=False, default=now_ist)
     updated_at = Column(DateTime, nullable=False, default=now_ist, onupdate=now_ist)
     

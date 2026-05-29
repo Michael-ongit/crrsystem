@@ -29,9 +29,9 @@ const getErrorMessage = (error: any, fallback: string) => {
 };
 
 const tableActionButtonClass =
-  'rounded bg-[#003F72] px-3 py-1 text-sm font-semibold text-white shadow-sm transition-all duration-200 ease-out hover:bg-[#002B4E] hover:shadow';
-const tableHeaderClass = 'px-4 py-3 text-left text-xs font-bold uppercase text-[#003F72]';
-const numericTableHeaderClass = 'px-4 py-3 text-right text-xs font-bold uppercase text-[#003F72]';
+  'rounded bg-[#134377] px-3 py-1 text-sm font-semibold text-white shadow-sm transition-all duration-200 ease-out hover:bg-[#134377] hover:shadow';
+const tableHeaderClass = 'px-4 py-3 text-left text-xs font-bold uppercase text-[#134377]';
+const numericTableHeaderClass = 'px-4 py-3 text-right text-xs font-bold uppercase text-[#134377]';
 
 const PlanningView: React.FC<PlanningViewProps> = ({ currentUser }) => {
   const [requisitions, setRequisitions] = useState<ConcreteRequisition[]>([]);
@@ -130,7 +130,7 @@ const PlanningView: React.FC<PlanningViewProps> = ({ currentUser }) => {
   if (loading) {
     return (
       <div className="flex h-96 items-center justify-center">
-        <div className="h-12 w-12 animate-spin rounded-full border-b-2 border-[#003F72]"></div>
+        <div className="h-12 w-12 animate-spin rounded-full border-b-2 border-[#134377]"></div>
       </div>
     );
   }
@@ -164,6 +164,7 @@ const PlanningView: React.FC<PlanningViewProps> = ({ currentUser }) => {
               <th className={tableHeaderClass}>Supply ID</th>
               <th className={tableHeaderClass}>Date</th>
               <th className={tableHeaderClass}>Location</th>
+              <th className={tableHeaderClass}>Ordered By</th>
               <th className={tableHeaderClass}>Structure</th>
               <th className={tableHeaderClass}>Grade</th>
               <th className={numericTableHeaderClass}>Qty</th>
@@ -177,6 +178,7 @@ const PlanningView: React.FC<PlanningViewProps> = ({ currentUser }) => {
                 <td className="px-4 py-3 font-mono text-sm">{req.supply_id}</td>
                 <td className="px-4 py-3 text-sm">{formatOrderDate(req)}</td>
                 <td className="px-4 py-3 text-sm">{req.location}</td>
+                <td className="px-4 py-3 text-sm">{req.placed_by_name || req.placed_by_email || '-'}</td>
                 <td className="px-4 py-3 text-sm">{req.structure_name}</td>
                 <td className="px-4 py-3 text-sm">{req.grade}</td>
                 <td className="px-4 py-3 text-right text-sm">{req.requested_qty.toFixed(2)}</td>
@@ -197,7 +199,7 @@ const PlanningView: React.FC<PlanningViewProps> = ({ currentUser }) => {
 
             {filteredRequisitions.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-500">
+                <td colSpan={9} className="px-4 py-8 text-center text-sm text-gray-500">
                   No pending requisitions to validate
                 </td>
               </tr>
@@ -234,7 +236,7 @@ const PlanningView: React.FC<PlanningViewProps> = ({ currentUser }) => {
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4">
               <div>
                 <h2 className="text-xl font-bold text-gray-900">Review Requisition</h2>
-                <p className="font-mono text-sm font-semibold text-[#003F72]">
+                <p className="font-mono text-sm font-semibold text-[#134377]">
                   {selectedRequisition.supply_id}
                 </p>
               </div>
@@ -251,7 +253,7 @@ const PlanningView: React.FC<PlanningViewProps> = ({ currentUser }) => {
               <RequisitionDetails requisition={selectedRequisition} hideWorkflowFields />
 
               <aside className="h-fit rounded-lg border border-gray-200 bg-gray-50 p-4">
-                <h3 className="mb-4 text-sm font-bold uppercase tracking-wide text-[#003F72]">
+                <h3 className="mb-4 text-sm font-bold uppercase tracking-wide text-[#134377]">
                   Planning Decision
                 </h3>
 
@@ -261,7 +263,7 @@ const PlanningView: React.FC<PlanningViewProps> = ({ currentUser }) => {
                 <textarea
                   value={remarks}
                   onChange={(event) => setRemarks(event.target.value)}
-                  className="mt-2 h-32 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-[#003F72] focus:ring-2 focus:ring-[#003F72]/15"
+                  className="mt-2 h-32 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-[#134377] focus:ring-2 focus:ring-[#134377]/15"
                 />
 
                 <div className="mt-5 grid grid-cols-1 gap-3">

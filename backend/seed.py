@@ -243,6 +243,7 @@ def _demo_users(session: Session) -> dict[str, User]:
 
     users = {
         "execution": ("Execution Demo", "execution.demo@mvdp.local", UserRole.EXECUTION),
+        "execution_secondary": ("Execution Secondary", "execution.secondary@mvdp.local", UserRole.EXECUTION),
         "planning": ("Planning Demo", "planning.demo@mvdp.local", UserRole.PLANNING),
         "production": ("Production Demo", "production.demo@mvdp.local", UserRole.PRODUCTION),
         "admin": ("Admin Demo", "admin.demo@mvdp.local", UserRole.ADMIN),
@@ -265,15 +266,26 @@ def _demo_users(session: Session) -> dict[str, User]:
 
 
 def _demo_reference_rows(session: Session, count: int) -> list[RequisitionElement]:
-    rows = (
+    all_rows = (
         session.query(RequisitionElement)
         .filter(RequisitionElement.structure_id.isnot(None))
         .order_by(RequisitionElement.id.asc())
-        .limit(count)
         .all()
     )
-    if rows:
-        return rows
+    if all_rows:
+        rows_by_location: dict[str, list[RequisitionElement]] = {}
+        for row in all_rows:
+            rows_by_location.setdefault(row.location or "", []).append(row)
+
+        distributed: list[RequisitionElement] = []
+        while len(distributed) < count and any(rows_by_location.values()):
+            for location in list(rows_by_location):
+                location_rows = rows_by_location[location]
+                if location_rows:
+                    distributed.append(location_rows.pop(0))
+                    if len(distributed) >= count:
+                        break
+        return distributed
 
     fallback = [
         RequisitionElement(
@@ -318,6 +330,7 @@ def _add_dispatch(
     dispatch_time: datetime,
     receipt_location: str,
     allocations: list[dict[str, object]] | None = None,
+    pending_secondary: dict[str, object] | None = None,
     returned_at: datetime | None = None,
 ) -> ProductionDispatch:
     dispatch = ProductionDispatch(
@@ -329,6 +342,12 @@ def _add_dispatch(
         receipt_location=receipt_location,
         wastage_qty=0,
     )
+    if pending_secondary:
+        dispatch.remaining_concrete_disposition = "Secondary Location"
+        dispatch.pending_secondary_qty = float(pending_secondary["qty"])
+        dispatch.pending_secondary_receipt_location = str(pending_secondary["location"])
+        dispatch.pending_secondary_receipt_structure_name = str(pending_secondary["structure_name"])
+        dispatch.pending_secondary_receipt_structure_id = str(pending_secondary["structure_id"])
     session.add(dispatch)
     session.flush()
 
@@ -371,6 +390,13 @@ def seed_sample_data(db: Session | None = None) -> int:
     try:
         users = _demo_users(session)
         refs = _demo_reference_rows(session, 12)
+        unique_locations = list(dict.fromkeys(ref.location for ref in refs if ref.location))
+        if unique_locations:
+            users["execution"].assigned_locations = unique_locations[:1]
+            users["execution_secondary"].assigned_locations = unique_locations[1:2] or unique_locations[:1]
+            users["admin"].assigned_locations = unique_locations
+        secondary_assigned_locations = users["execution_secondary"].assigned_locations or []
+        secondary_locations = set(secondary_assigned_locations)
         now = now_ist().replace(microsecond=0)
         grades = ["M-45", "M-50", "M-40", "M-30"]
         placements = ["Boom placer", "Line pump", "Direct chute", "Concrete bucket"]
@@ -381,7 +407,7 @@ def seed_sample_data(db: Session | None = None) -> int:
             ("Approved B", RequisitionStatus.VALIDATED, "Approved", []),
             ("Partial Dispatch", RequisitionStatus.VALIDATED, "Approved", [{"qty_ratio": 0.55, "allocated": []}]),
             ("Awaiting Ack", RequisitionStatus.DISPATCHED, "Approved", [{"qty_ratio": 1.0, "allocated": []}]),
-            ("Partial Ack", RequisitionStatus.DISPATCHED, "Approved", [{"qty_ratio": 1.0, "allocated": [0.45]}]),
+            ("Secondary Pending", RequisitionStatus.DISPATCHED, "Approved", [{"qty_ratio": 1.0, "allocated": [0.55], "secondary_pending": 0.45}]),
             ("Return Ready", RequisitionStatus.RETURNING, "Approved", [{"qty_ratio": 1.0, "allocated": [1.0]}]),
             ("Two TM Return", RequisitionStatus.RETURNING, "Approved", [{"qty_ratio": 0.55, "allocated": [1.0], "returned": True}, {"qty_ratio": 0.45, "allocated": [1.0]}]),
             ("Reconciled A", RequisitionStatus.RECONCILED, "Approved", [{"qty_ratio": 1.0, "allocated": [1.0], "returned": True}]),
@@ -394,13 +420,19 @@ def seed_sample_data(db: Session | None = None) -> int:
             requested_qty = round(8.0 + (index % 5) * 2.5, 2)
             created_at = now - timedelta(days=14 - index, hours=index)
             supply_id = f"MVDP-DEMO-{index:03d}"
+            owner = users["execution_secondary"] if ref.location in secondary_locations else users["execution"]
             requisition = ConcreteRequisition(
                 supply_id=supply_id,
                 req_date=created_at,
                 rfi_no=f"RFI-DEMO-{index:03d}",
                 requisition_date=created_at.date().isoformat(),
                 location=ref.location,
-                in_charge_id=users["execution"].id,
+                in_charge_id=owner.id,
+                in_charge_name=owner.name,
+                selected_in_charge=owner.name,
+                placed_by_id=owner.id,
+                placed_by_name=owner.name,
+                placed_by_email=owner.email,
                 structure_type=ref.structure_type,
                 structure_name=ref.structure_name,
                 structure_id=ref.structure_id,
@@ -461,6 +493,24 @@ def seed_sample_data(db: Session | None = None) -> int:
                             "remarks": "Demo concrete deposited at site",
                         }
                     )
+                pending_secondary_payload = None
+                if spec.get("secondary_pending"):
+                    secondary_location = secondary_assigned_locations[0] if secondary_assigned_locations else None
+                    target_ref = next(
+                        (
+                            candidate
+                            for candidate in refs
+                            if candidate.location == secondary_location and candidate.location != ref.location
+                        ),
+                        next((candidate for candidate in refs if candidate.location != ref.location), refs[(index + 3) % len(refs)]),
+                    )
+                    pending_secondary_qty = round(qty * float(spec["secondary_pending"]), 2)
+                    pending_secondary_payload = {
+                        "qty": pending_secondary_qty,
+                        "location": target_ref.location,
+                        "structure_name": target_ref.structure_name,
+                        "structure_id": target_ref.structure_id,
+                    }
                 returned_at = (
                     dispatch_time + timedelta(hours=3)
                     if spec.get("returned")
@@ -475,6 +525,7 @@ def seed_sample_data(db: Session | None = None) -> int:
                     dispatch_time=dispatch_time,
                     receipt_location=ref.location,
                     allocations=allocation_payloads,
+                    pending_secondary=pending_secondary_payload,
                     returned_at=returned_at,
                 )
 

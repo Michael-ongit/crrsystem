@@ -93,6 +93,7 @@ export const userAPI = {
     email: string;
     password: string;
     role: string;
+    assigned_locations?: string[];
   }): Promise<User> => apiClient.post('/users', userData).then((res) => res.data),
 
   getUsers: (): Promise<User[]> => apiClient.get('/users').then((res) => res.data),
@@ -115,6 +116,7 @@ export const adminAPI = {
     email?: string;
     password?: string;
     role?: string;
+    assigned_locations?: string[];
     is_email_verified?: boolean;
   }): Promise<User> => apiClient.patch(`/admin/users/${userId}`, userData).then((res) => res.data),
 
@@ -128,13 +130,14 @@ export const adminAPI = {
     email: string;
     name_hint?: string;
     role: string;
+    assigned_locations?: string[];
     is_active?: boolean;
   }): Promise<RegistrationInvite> =>
     apiClient.post('/admin/registration-emails', data).then((res) => res.data),
 
   updateRegistrationEmail: (
     inviteId: string,
-    data: { name_hint?: string; role?: string; is_active?: boolean }
+    data: { name_hint?: string; role?: string; assigned_locations?: string[]; is_active?: boolean }
   ): Promise<RegistrationInvite> =>
     apiClient.patch(`/admin/registration-emails/${inviteId}`, data).then((res) => res.data),
 
@@ -198,9 +201,9 @@ export const requisitionAPI = {
       .get('/requisitions/supply-id/preview', { params: data })
       .then((res) => res.data),
 
-  getRequisitions: (statusFilter?: string): Promise<ConcreteRequisition[]> =>
+  getRequisitions: (statusFilter?: string, locationScope?: 'assigned'): Promise<ConcreteRequisition[]> =>
     apiClient
-      .get('/requisitions', { params: { status_filter: statusFilter } })
+      .get('/requisitions', { params: { status_filter: statusFilter, location_scope: locationScope } })
       .then((res) => res.data),
 
   getRequisitionById: (supplyId: string): Promise<ConcreteRequisition> =>

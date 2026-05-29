@@ -4,10 +4,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from database import get_db
 from models import (
-    ConcreteRequisition, DropdownOption, PlanningValidation, RequisitionElement,
+    ConcreteRequisition, DropdownOption, PlanningValidation, ProductionDispatch, RequisitionElement,
     RequisitionStatus, SupplySequence, User, UserRole
 )
 from . import auth
+from email_service import (
+    order_placed_email,
+    planning_decision_email,
+    send_notification,
+    users_by_role,
+)
 from schemas import (
     ConcreteRequisitionCreate, ConcreteRequisitionResponse,
     PlanningValidationCreate, PlanningValidationResponse,
@@ -21,6 +27,24 @@ import re
 router = APIRouter(prefix="/requisitions", tags=["Requisitions"])
 logger = logging.getLogger(__name__)
 SEND_BACK_EDIT_WINDOW_HOURS = 12
+
+
+def _apply_location_scope(query, current_user: User, location_scope: str | None):
+    if location_scope != "assigned" or current_user.role != UserRole.EXECUTION:
+        return query
+
+    locations = current_user.assigned_locations
+    if locations:
+        return query.filter(
+            (ConcreteRequisition.location.in_(locations))
+            | ConcreteRequisition.dispatch_logs.any(
+                ProductionDispatch.pending_secondary_receipt_location.in_(locations)
+            )
+        )
+    return query.filter(
+        (ConcreteRequisition.in_charge_id == current_user.id)
+        | (ConcreteRequisition.placed_by_id == current_user.id)
+    )
 
 
 def _attach_latest_planning(requisition: ConcreteRequisition, db: Session) -> ConcreteRequisition:
@@ -371,7 +395,10 @@ def create_requisition(
 
         db_requisition = ConcreteRequisition(
             supply_id=generated_supply_id,
-            status=RequisitionStatus.PENDING
+            status=RequisitionStatus.PENDING,
+            placed_by_id=current_user.id,
+            placed_by_name=current_user.name,
+            placed_by_email=current_user.email,
         )
         _apply_requisition_payload(db_requisition, requisition)
 
@@ -380,6 +407,11 @@ def create_requisition(
         db.refresh(db_requisition)
         
         logger.info(f"Requisition created: {db_requisition.supply_id}")
+        send_notification(
+            subject=f"Concrete order placed: {db_requisition.supply_id}",
+            body=order_placed_email(db_requisition),
+            recipients=users_by_role(db, UserRole.PLANNING),
+        )
         return _attach_latest_planning(db_requisition, db)
         
     except HTTPException:
@@ -401,7 +433,9 @@ def create_requisition(
 )
 def get_requisitions(
     status_filter: str = None,
-    db: Session = Depends(get_db)
+    location_scope: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(auth.get_current_user),
 ):
     """
     Get all concrete requisitions.
@@ -410,6 +444,7 @@ def get_requisitions(
     """
     try:
         query = db.query(ConcreteRequisition)
+        query = _apply_location_scope(query, current_user, location_scope)
         
         if status_filter:
             query = query.filter(ConcreteRequisition.status == status_filter)
@@ -625,8 +660,22 @@ def validate_requisition(
         db.add(db_validation)
         db.commit()
         db.refresh(db_validation)
+        db.refresh(requisition)
         
         logger.info(f"Requisition validated: {supply_id}, Status: {validation.is_approved}")
+        placer = db.query(User).filter(User.id == requisition.placed_by_id).first() if requisition.placed_by_id else None
+        planning_recipients = users_by_role(db, UserRole.PLANNING, exclude_user_id=current_user.id)
+        if validation.is_approved == "Approved":
+            recipients = [placer] + users_by_role(db, UserRole.PRODUCTION) + planning_recipients
+            subject = f"Concrete order approved: {supply_id}"
+        else:
+            recipients = [placer] + planning_recipients
+            subject = f"Concrete order {validation.is_approved.lower()}: {supply_id}"
+        send_notification(
+            subject=subject,
+            body=planning_decision_email(requisition, db_validation),
+            recipients=recipients,
+        )
         return db_validation
         
     except HTTPException:

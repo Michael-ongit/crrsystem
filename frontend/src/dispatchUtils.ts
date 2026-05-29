@@ -16,6 +16,15 @@ export const getAllocatedQty = (dispatch: ProductionDispatch): number => {
 export const getRemainingQty = (dispatch: ProductionDispatch): number =>
   Math.max(0, dispatch.actual_dispatched_qty - getAllocatedQty(dispatch) - (dispatch.returned_wastage_qty || 0));
 
+export const getPendingSecondaryQty = (dispatch: ProductionDispatch): number =>
+  Math.max(0, dispatch.pending_secondary_qty || 0);
+
+export const getReturnedWastageQty = (dispatch: ProductionDispatch): number =>
+  Math.max(0, dispatch.returned_wastage_qty || 0);
+
+export const getUnresolvedRemainingQty = (dispatch: ProductionDispatch): number =>
+  Math.max(0, getRemainingQty(dispatch) - getPendingSecondaryQty(dispatch));
+
 export const isDispatchFullyAllocated = (dispatch: ProductionDispatch): boolean =>
   getRemainingQty(dispatch) <= EPSILON;
 
@@ -24,11 +33,34 @@ export const getVehicleRemainingQty = (dispatch: ProductionDispatch): number =>
 
 export const formatAllocationDestinations = (dispatch: ProductionDispatch): string => {
   const allocations = dispatch.receipt_allocations || [];
-  if (allocations.length === 0) return dispatch.receipt_location || '-';
+  const parts: string[] = [];
 
-  return allocations
-    .map((allocation) =>
+  if (allocations.length === 0 && dispatch.receipt_location) {
+    parts.push(dispatch.receipt_location);
+  }
+
+  parts.push(
+    ...allocations.map((allocation) =>
       `${allocation.deposited_qty.toFixed(2)} cum - ${allocation.receipt_location} / ${allocation.receipt_structure_name} / ${allocation.receipt_structure_id}`
     )
-    .join('; ');
+  );
+
+  const returnedQty = dispatch.returned_wastage_qty || 0;
+  if (returnedQty > EPSILON) {
+    parts.push(`${returnedQty.toFixed(2)} cum - Back to Plant`);
+  }
+
+  const pendingSecondaryQty = dispatch.pending_secondary_qty || 0;
+  if (pendingSecondaryQty > EPSILON) {
+    parts.push(
+      `${pendingSecondaryQty.toFixed(2)} cum - Pending secondary receipt: ${dispatch.pending_secondary_receipt_location || '-'} / ${dispatch.pending_secondary_receipt_structure_name || '-'} / ${dispatch.pending_secondary_receipt_structure_id || '-'}`
+    );
+  }
+
+  const remainingQty = getRemainingQty(dispatch);
+  if (remainingQty > EPSILON && pendingSecondaryQty <= EPSILON) {
+    parts.push(`${remainingQty.toFixed(2)} cum - Remaining in vehicle`);
+  }
+
+  return parts.length ? parts.join('; ') : '-';
 };

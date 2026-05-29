@@ -41,7 +41,7 @@ const Layout: React.FC<LayoutProps> = ({
     {
       label: 'Dispatch Summary',
       path: '/dispatch-summary',
-      allowedRoles: [UserRole.PRODUCTION, UserRole.ADMIN],
+      allowedRoles: [UserRole.EXECUTION, UserRole.ADMIN],
       icon: 'DS',
     },
     {
@@ -65,38 +65,52 @@ const Layout: React.FC<LayoutProps> = ({
   return (
     <div className="flex h-screen bg-gray-100">
       <aside
-        className={`relative flex flex-col bg-[#003F72] text-white shadow-lg transition-all duration-300 ease-out ${
+        className={`relative flex flex-col bg-[#134377] text-white shadow-lg transition-all duration-300 ease-out ${
           isCollapsed ? 'w-20' : 'w-64'
         }`}
       >
         <div className="h-20 flex items-center justify-between gap-2 border-b border-white/15 px-4">
           {!isCollapsed && (
-            <h1 className="text-base font-bold leading-tight">
+            <h1 className="text-sm font-bold leading-tight">
               Concrete Requisition & Reconciliation System
             </h1>
           )}
           <button
             type="button"
             onClick={() => setIsCollapsed((value) => !value)}
-            className={`group ml-auto flex h-10 items-center justify-center rounded-md border border-white/20 bg-white/10 text-white transition-all duration-200 ease-out hover:bg-white/20 hover:shadow-sm ${
-              isCollapsed ? 'w-10' : 'w-28 gap-2 px-3'
+            className={`group ml-auto flex h-8 items-center justify-center rounded-md border border-white/20 bg-white/10 text-white transition-all duration-200 ease-out hover:bg-white/20 hover:shadow-sm ${
+              isCollapsed ? 'w-8' : 'w-8'
             }`}
             aria-label={isCollapsed ? 'Expand side panel' : 'Collapse side panel'}
             title={isCollapsed ? 'Expand side panel' : 'Collapse side panel'}
           >
-            <span className="flex h-5 w-5 items-center justify-center rounded bg-white/15 text-sm font-bold" aria-hidden="true">
+            <span className="flex h-4 w-4 items-center justify-center rounded bg-white/15 text-xs font-bold" aria-hidden="true">
               {isCollapsed ? '>' : '<'}
             </span>
-            {!isCollapsed && <span className="text-xs font-semibold">Collapse</span>}
           </button>
         </div>
 
-        {!isCollapsed && (
-          <div className="p-4 border-b border-white/15">
+        {!isCollapsed ? (
+          <Link
+            to="/profile"
+            className={`block border-b border-white/15 p-4 transition-colors ${
+              location.pathname === '/profile' ? 'bg-white/15' : 'hover:bg-white/10'
+            }`}
+          >
             <p className="text-sm font-semibold">{currentUser?.name}</p>
             <p className="text-xs text-white/75">{currentRole}</p>
             <p className="text-xs text-white/60 truncate">{currentUser?.email}</p>
-          </div>
+          </Link>
+        ) : (
+          <Link
+            to="/profile"
+            title="Profile"
+            className={`mx-auto mt-4 flex h-10 w-10 items-center justify-center rounded-md border border-white/20 text-xs font-bold transition-colors ${
+              location.pathname === '/profile' ? 'bg-white text-[#134377]' : 'bg-white/10 text-white hover:bg-white/20'
+            }`}
+          >
+            {(currentUser?.name || currentUser?.email || 'U').slice(0, 2).toUpperCase()}
+          </Link>
         )}
 
         <nav className="flex-1 p-4 space-y-2">
@@ -109,7 +123,7 @@ const Layout: React.FC<LayoutProps> = ({
                 isCollapsed ? 'justify-center px-2 py-3' : 'px-4 py-2'
               } ${
                 location.pathname === item.path
-                  ? 'bg-white text-[#003F72]'
+                  ? 'bg-white text-[#134377]'
                   : 'text-white/85 hover:bg-white/10'
               }`}
             >
@@ -125,7 +139,7 @@ const Layout: React.FC<LayoutProps> = ({
           <button
             onClick={onLogout}
             title={isCollapsed ? 'Sign out' : undefined}
-            className={`w-full rounded text-sm transition bg-[#002B4E] text-white/90 hover:bg-white/10 ${
+            className={`w-full rounded text-sm transition bg-[#134377] text-white/90 hover:bg-white/10 ${
               isCollapsed ? 'px-2 py-3 text-center' : 'px-3 py-2 text-left'
             }`}
           >

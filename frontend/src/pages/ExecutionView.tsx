@@ -1,5 +1,5 @@
 // pages/ExecutionView.tsx - Execution team requisition form
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import Select from 'react-select';
 import { hierarchyAPI, requisitionAPI } from '../api';
@@ -107,20 +107,20 @@ type SelectOption = { value: string; label: string };
 const toOptions = (values: string[]): SelectOption[] => values.map((value) => ({ value, label: value }));
 
 const fieldClass =
-  'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-[#003F72] focus:ring-2 focus:ring-[#003F72]/15';
+  'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-[#134377] focus:ring-2 focus:ring-[#134377]/15';
 
 const readOnlyClass =
   'w-full rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-700';
 
-const tableHeaderClass = 'px-4 py-3 text-left text-xs font-bold uppercase text-[#003F72]';
-const numericTableHeaderClass = 'px-4 py-3 text-right text-xs font-bold uppercase text-[#003F72]';
+const tableHeaderClass = 'px-4 py-3 text-left text-xs font-bold uppercase text-[#134377]';
+const numericTableHeaderClass = 'px-4 py-3 text-right text-xs font-bold uppercase text-[#134377]';
 const tableActionButtonClass =
-  'rounded bg-[#003F72] px-3 py-1 text-xs font-semibold text-white shadow-sm transition-all duration-200 ease-out hover:bg-[#002B4E] hover:shadow';
+  'rounded bg-[#134377] px-3 py-1 text-xs font-semibold text-white shadow-sm transition-all duration-200 ease-out hover:bg-[#134377] hover:shadow';
 
 const selectClassNames = {
   control: (state: any) =>
     `min-h-[38px] rounded-md border bg-white text-sm shadow-sm ${
-      state.isFocused ? 'border-[#003F72] ring-2 ring-[#003F72]/15' : 'border-gray-300'
+      state.isFocused ? 'border-[#134377] ring-2 ring-[#134377]/15' : 'border-gray-300'
     }`,
   valueContainer: () => 'px-2',
   input: () => 'text-sm text-gray-900',
@@ -129,7 +129,7 @@ const selectClassNames = {
   menu: () => 'z-50 rounded-md border border-gray-200 bg-white text-sm shadow-lg',
   option: (state: any) =>
     `cursor-pointer px-3 py-2 ${
-      state.isSelected ? 'bg-[#003F72] text-white' : state.isFocused ? 'bg-[#003F72]/10 text-gray-900' : 'text-gray-900'
+      state.isSelected ? 'bg-[#134377] text-white' : state.isFocused ? 'bg-[#134377]/10 text-gray-900' : 'text-gray-900'
     }`,
 };
 
@@ -152,7 +152,7 @@ const Field: React.FC<{
 const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
   <section className="space-y-4">
     <div className="border-b border-gray-200 pb-2">
-      <h2 className="text-sm font-bold uppercase tracking-wide text-[#003F72]">{title}</h2>
+      <h2 className="text-sm font-bold uppercase tracking-wide text-[#134377]">{title}</h2>
     </div>
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">{children}</div>
   </section>
@@ -194,6 +194,7 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
 
   const draftStorageKey = `executionDrafts:${currentUser?.id || 'anonymous'}`;
   const editDraftStorageKey = `executionEditDrafts:${currentUser?.id || 'anonymous'}`;
+  const isResettingFormRef = useRef(false);
 
   const locationValue = watch('location');
   const structureTypeValue = watch('structure_type');
@@ -252,8 +253,16 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
   };
 
   const fetchOrders = async () => {
-    const reqs = await requisitionAPI.getRequisitions();
-    setOrders(reqs.filter((req) => req.in_charge_id === currentUser?.id));
+    const reqs = await requisitionAPI.getRequisitions(
+      undefined,
+      currentUser?.assigned_locations?.length ? 'assigned' : undefined
+    );
+    const assigned = new Set((currentUser?.assigned_locations || []).map((location) => location.toLowerCase()));
+    setOrders(
+      assigned.size > 0
+        ? reqs.filter((req) => assigned.has(req.location.toLowerCase()))
+        : reqs.filter((req) => req.in_charge_id === currentUser?.id || req.placed_by_id === currentUser?.id)
+    );
   };
 
   useEffect(() => {
@@ -362,6 +371,7 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
     if (!isModalOpen) return undefined;
 
     const subscription = watch((value) => {
+      if (isResettingFormRef.current) return;
       const formData = value as ExecutionFormData;
       if (editingSupplyId) {
         localStorage.setItem(`${editDraftStorageKey}:${editingSupplyId}`, JSON.stringify(formData));
@@ -379,9 +389,17 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
     return () => subscription.unsubscribe();
   }, [activeDraftId, editDraftStorageKey, editingSupplyId, isModalOpen, watch]);
 
+  const resetOrderForm = (values: ExecutionFormData) => {
+    isResettingFormRef.current = true;
+    reset(values);
+    window.setTimeout(() => {
+      isResettingFormRef.current = false;
+    }, 0);
+  };
+
   const openNewOrder = () => {
     const draftId = crypto.randomUUID();
-    reset(defaultValues(currentUser));
+    resetOrderForm(defaultValues(currentUser));
     setActiveDraftId(draftId);
     setEditingSupplyId(null);
     setGeneratedSupplyId('');
@@ -389,7 +407,7 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
   };
 
   const resumeDraft = (draft: DraftOrder) => {
-    reset(draft.data);
+    resetOrderForm(draft.data);
     setActiveDraftId(draft.draft_id);
     setEditingSupplyId(null);
     setIsModalOpen(true);
@@ -451,7 +469,7 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
 
   const openSentBackEdit = (order: ConcreteRequisition) => {
     const savedDraft = localStorage.getItem(`${editDraftStorageKey}:${order.supply_id}`);
-    reset(savedDraft ? JSON.parse(savedDraft) : formValuesFromOrder(order));
+    resetOrderForm(savedDraft ? JSON.parse(savedDraft) : formValuesFromOrder(order));
     setActiveDraftId(null);
     setEditingSupplyId(order.supply_id);
     setGeneratedSupplyId(order.supply_id);
@@ -504,7 +522,7 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
       if (submittedEditingSupplyId) {
         localStorage.removeItem(`${editDraftStorageKey}:${submittedEditingSupplyId}`);
       }
-      reset(defaultValues(currentUser));
+      resetOrderForm(defaultValues(currentUser));
       setActiveDraftId(null);
       setEditingSupplyId(null);
       setGeneratedSupplyId('');
@@ -522,7 +540,7 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
   if (loading) {
     return (
       <div className="flex h-96 items-center justify-center">
-        <div className="h-12 w-12 animate-spin rounded-full border-b-2 border-[#003F72]"></div>
+        <div className="h-12 w-12 animate-spin rounded-full border-b-2 border-[#134377]"></div>
       </div>
     );
   }
@@ -554,7 +572,7 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
           <button
             type="button"
             onClick={openNewOrder}
-            className="h-10 shrink-0 rounded-md bg-white px-5 text-sm font-semibold text-[#003F72] shadow-sm transition-all duration-200 ease-out hover:bg-blue-50 hover:shadow"
+            className="h-10 shrink-0 rounded-md bg-white px-5 text-sm font-semibold text-[#134377] shadow-sm transition-all duration-200 ease-out hover:bg-blue-50 hover:shadow"
           >
             Create New Order
           </button>
@@ -566,6 +584,7 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
               <th className={tableHeaderClass}>Supply ID</th>
               <th className={tableHeaderClass}>Date</th>
               <th className={tableHeaderClass}>Location</th>
+              <th className={tableHeaderClass}>Ordered By</th>
               <th className={tableHeaderClass}>Structure</th>
               <th className={tableHeaderClass}>Grade</th>
               <th className={numericTableHeaderClass}>Order Qty</th>
@@ -579,6 +598,7 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
                 <td className="px-4 py-3 text-sm font-semibold text-amber-800">Draft</td>
                 <td className="px-4 py-3 text-sm">{draft.data.requisition_date || toDateInputIST(draft.updated_at)}</td>
                 <td className="px-4 py-3 text-sm">{draft.data.location || '-'}</td>
+                <td className="px-4 py-3 text-sm">{currentUser?.name || '-'}</td>
                 <td className="px-4 py-3 text-sm">{draft.data.structure_name || '-'}</td>
                 <td className="px-4 py-3 text-sm">{draft.data.grade || '-'}</td>
                 <td className="px-4 py-3 text-right text-sm">
@@ -614,6 +634,7 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
                 <td className="px-4 py-3 font-mono text-sm">{order.supply_id}</td>
                 <td className="px-4 py-3 text-sm">{formatOrderDate(order)}</td>
                 <td className="px-4 py-3 text-sm">{order.location}</td>
+                <td className="px-4 py-3 text-sm">{order.placed_by_name || order.placed_by_email || '-'}</td>
                 <td className="px-4 py-3 text-sm">{order.structure_name}</td>
                 <td className="px-4 py-3 text-sm">{order.grade}</td>
                 <td className="px-4 py-3 text-right text-sm">{order.requested_qty.toFixed(2)}</td>
@@ -646,7 +667,7 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
 
             {drafts.length === 0 && filteredCurrentOrders.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-500">
+                <td colSpan={9} className="px-4 py-8 text-center text-sm text-gray-500">
                   No orders yet.
                 </td>
               </tr>
@@ -689,7 +710,7 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
                 <h2 className="text-xl font-bold text-gray-900">
                   {editingSupplyId ? 'Revise Requisition Slip' : 'Concrete Requisition Slip'}
                 </h2>
-                <p className="min-h-6 font-mono text-sm font-semibold text-[#003F72]">{generatedSupplyId}</p>
+                <p className="min-h-6 font-mono text-sm font-semibold text-[#134377]">{generatedSupplyId}</p>
               </div>
               <button
                 type="button"
@@ -788,24 +809,20 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
                 </Field>
 
                 <Field label="Structure ID" required error={errors.structure_id?.message}>
-                  <Controller
-                    name="structure_id"
-                    control={control}
-                    rules={{ required: 'Structure ID is required' }}
-                    render={({ field }) => (
-                      <Select
-                        classNames={selectClassNames}
-                        isSearchable
-                        isDisabled={!locationValue || !structureTypeValue || !structureNameValue}
-                        options={structureIdOptions}
-                        value={optionFor(structureIdOptions, field.value)}
-                        onChange={(option) => {
-                          field.onChange(option?.value || '');
-                          setValue('pile_lift_id', '');
-                        }}
-                      />
-                    )}
+                  <input
+                    className={fieldClass}
+                    list="structure-id-options"
+                    disabled={!locationValue || !structureTypeValue || !structureNameValue}
+                    {...register('structure_id', {
+                      required: 'Structure ID is required',
+                      onChange: () => setValue('pile_lift_id', ''),
+                    })}
                   />
+                  <datalist id="structure-id-options">
+                    {structureIdOptions.map((option) => (
+                      <option key={option.value} value={option.value} />
+                    ))}
+                  </datalist>
                 </Field>
 
                 <Field label="Element ID">
@@ -941,7 +958,7 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
                   <button
                     type="button"
                     onClick={saveDraft}
-                    className="rounded-md border border-[#003F72] px-5 py-3 text-sm font-semibold text-[#003F72] hover:bg-[#003F72]/10"
+                    className="rounded-md border border-[#134377] px-5 py-3 text-sm font-semibold text-[#134377] hover:bg-[#134377]/10"
                   >
                     Save as Draft
                   </button>
@@ -949,7 +966,7 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="rounded-md bg-[#003F72] px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-[#002B4E] disabled:bg-gray-400"
+                  className="rounded-md bg-[#134377] px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-[#134377] disabled:bg-gray-400"
                 >
                   {submitting ? 'Submitting...' : editingSupplyId ? 'Resubmit Requisition' : 'Create Requisition'}
                 </button>

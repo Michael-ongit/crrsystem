@@ -1,5 +1,5 @@
 // pages/ProductionView.tsx - Production team dispatch logging
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { productionAPI, requisitionAPI, userAPI } from '../api';
 import CollapsibleTableSection from '../components/CollapsibleTableSection';
@@ -63,12 +63,12 @@ const getErrorMessage = (error: any, fallback: string) => {
 };
 
 const fieldClass =
-  'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-[#003F72] focus:ring-2 focus:ring-[#003F72]/15';
+  'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-[#134377] focus:ring-2 focus:ring-[#134377]/15';
 
-const tableHeaderClass = 'px-4 py-3 text-left text-xs font-bold uppercase text-[#003F72]';
-const numericTableHeaderClass = 'px-4 py-3 text-right text-xs font-bold uppercase text-[#003F72]';
+const tableHeaderClass = 'px-4 py-3 text-left text-xs font-bold uppercase text-[#134377]';
+const numericTableHeaderClass = 'px-4 py-3 text-right text-xs font-bold uppercase text-[#134377]';
 const tableActionButtonClass =
-  'rounded bg-[#003F72] px-3 py-1 text-sm font-semibold text-white shadow-sm transition-all duration-200 ease-out hover:bg-[#002B4E] hover:shadow';
+  'rounded bg-[#134377] px-3 py-1 text-sm font-semibold text-white shadow-sm transition-all duration-200 ease-out hover:bg-[#134377] hover:shadow';
 
 const today = () => toDateInputIST();
 
@@ -100,6 +100,8 @@ const ProductionView: React.FC = () => {
   const [dispatchMessage, setDispatchMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const dispatchDraftStorageKey = 'productionDispatchDrafts';
   const returnDraftStorageKey = 'productionReturnDrafts';
+  const isResettingDispatchFormRef = useRef(false);
+  const isResettingReturnFormRef = useRef(false);
 
   const {
     register,
@@ -120,6 +122,7 @@ const ProductionView: React.FC = () => {
     register: registerReturn,
     handleSubmit: handleReturnSubmit,
     watch: watchReturn,
+    getValues: getReturnValues,
     formState: { errors: returnErrors },
     reset: resetReturn,
   } = useForm<ReturnToPlantFormData>({
@@ -264,6 +267,7 @@ const ProductionView: React.FC = () => {
       ['Date', formatOrderDate(requisition)],
       ['Supply ID', dispatch.supply_id],
       ['Location', requisition.location],
+      ['Ordered By', requisition.placed_by_name || requisition.placed_by_email],
       ['In-Charge', requisition.selected_in_charge || requisition.in_charge_name || userNames[requisition.in_charge_id] || requisition.in_charge_id],
       ['Engineer', requisition.contact_person],
       ['Structure Name', requisition.structure_name],
@@ -281,10 +285,61 @@ const ProductionView: React.FC = () => {
     ] as Array<[string, unknown]>;
   }, [selectedReturnDispatch, selectedReturnOrder, userNames]);
 
+  const resetDispatchForm = (values: DispatchFormData) => {
+    isResettingDispatchFormRef.current = true;
+    reset(values);
+    window.setTimeout(() => {
+      isResettingDispatchFormRef.current = false;
+    }, 0);
+  };
+
+  const resetReturnForm = (values: ReturnToPlantFormData) => {
+    isResettingReturnFormRef.current = true;
+    resetReturn(values);
+    window.setTimeout(() => {
+      isResettingReturnFormRef.current = false;
+    }, 0);
+  };
+
+  const persistSelectedDispatchVehicleForm = () => {
+    if (!selectedDispatchVehicleId) return dispatchVehicles;
+    const values = getValues();
+    const nextVehicles = dispatchVehicles.map((vehicle) =>
+      vehicle.vehicle_id === selectedDispatchVehicleId
+        ? {
+            ...vehicle,
+            batching_plant_id: values.batching_plant_id,
+            tm_number: values.tm_number,
+            actual_dispatched_qty: values.actual_dispatched_qty ?? vehicle.actual_dispatched_qty,
+            dispatch_time: values.dispatch_time,
+            receipt_location: values.receipt_location,
+          }
+        : vehicle
+    );
+    setDispatchVehicles(nextVehicles);
+    if (selectedRequisition) {
+      const drafts = readDispatchDrafts();
+      drafts[selectedRequisition.supply_id] = {
+        form: values,
+        vehicles: nextVehicles,
+      };
+      writeDispatchDrafts(drafts);
+    }
+    return nextVehicles;
+  };
+
+  const persistSelectedReturnDraft = () => {
+    if (!selectedReturnDispatch) return;
+    const drafts = readReturnDrafts();
+    drafts[selectedReturnDispatch.dispatch_id] = getReturnValues();
+    writeReturnDrafts(drafts);
+  };
+
   useEffect(() => {
     if (!selectedReturnDispatch) return undefined;
 
     const subscription = watchReturn((value) => {
+      if (isResettingReturnFormRef.current) return;
       const drafts = readReturnDrafts();
       drafts[selectedReturnDispatch.dispatch_id] = value as ReturnToPlantFormData;
       writeReturnDrafts(drafts);
@@ -300,7 +355,7 @@ const ProductionView: React.FC = () => {
     setSelectedDispatchVehicleId(null);
     setMessage(null);
     setDispatchMessage(null);
-    reset(savedDraft?.form || {
+    resetDispatchForm(savedDraft?.form || {
       batching_plant_id: '',
       tm_number: '',
       actual_dispatched_qty: Math.max(0, req.requested_qty - (dispatchTotals[req.supply_id] || 0)) || undefined,
@@ -323,6 +378,7 @@ const ProductionView: React.FC = () => {
     if (!selectedRequisition) return undefined;
 
     const subscription = watch((value) => {
+      if (isResettingDispatchFormRef.current) return;
       const drafts = readDispatchDrafts();
       drafts[selectedRequisition.supply_id] = {
         form: value as DispatchFormData,
@@ -335,6 +391,7 @@ const ProductionView: React.FC = () => {
   }, [dispatchVehicles, selectedRequisition, watch]);
 
   const closeDispatch = async () => {
+    persistSelectedDispatchVehicleForm();
     setSelectedRequisition(null);
     setDispatchVehicles([]);
     setSelectedDispatchVehicleId(null);
@@ -343,8 +400,9 @@ const ProductionView: React.FC = () => {
   };
 
   const clearVehicleForm = (remainingQty = dispatchSummary.remainingQty) => {
+    persistSelectedDispatchVehicleForm();
     setSelectedDispatchVehicleId(null);
-    reset({
+    resetDispatchForm({
       batching_plant_id: '',
       tm_number: '',
       actual_dispatched_qty: remainingQty || undefined,
@@ -354,8 +412,9 @@ const ProductionView: React.FC = () => {
   };
 
   const selectDispatchVehicle = (vehicle: StagedDispatchVehicle) => {
+    persistSelectedDispatchVehicleForm();
     setSelectedDispatchVehicleId(vehicle.vehicle_id);
-    reset({
+    resetDispatchForm({
       batching_plant_id: vehicle.batching_plant_id,
       tm_number: vehicle.tm_number,
       actual_dispatched_qty: vehicle.actual_dispatched_qty,
@@ -411,7 +470,7 @@ const ProductionView: React.FC = () => {
       });
 
       setSelectedDispatchVehicleId(null);
-      reset({
+      resetDispatchForm({
         batching_plant_id: data.batching_plant_id,
         tm_number: '',
         actual_dispatched_qty: nextRemainingQty || undefined,
@@ -436,7 +495,7 @@ const ProductionView: React.FC = () => {
     setSelectedReturnOrder(order);
     setSelectedReturnDispatchId(firstDispatch.dispatch_id);
     setMessage(null);
-    resetReturn(savedDraft || {
+    resetReturnForm(savedDraft || {
       return_to_plant_date: today(),
       return_to_plant_time: '',
       remarks: firstDispatch.remarks || '',
@@ -444,9 +503,10 @@ const ProductionView: React.FC = () => {
   };
 
   const selectReturnDispatch = (dispatch: ProductionDispatch) => {
+    persistSelectedReturnDraft();
     const savedDraft = readReturnDrafts()[dispatch.dispatch_id];
     setSelectedReturnDispatchId(dispatch.dispatch_id);
-    resetReturn(savedDraft || {
+    resetReturnForm(savedDraft || {
       return_to_plant_date: dispatch.return_to_plant_time
         ? toDateInputIST(dispatch.return_to_plant_time)
         : today(),
@@ -455,6 +515,12 @@ const ProductionView: React.FC = () => {
         : '',
       remarks: dispatch.remarks || '',
     });
+  };
+
+  const closeReturnToPlant = () => {
+    persistSelectedReturnDraft();
+    setSelectedReturnOrder(null);
+    setSelectedReturnDispatchId(null);
   };
 
   const onReturnSubmit = async (data: ReturnToPlantFormData) => {
@@ -495,13 +561,14 @@ const ProductionView: React.FC = () => {
   };
 
   const finalizeDispatchVehicles = async () => {
-    if (!selectedRequisition || dispatchVehicles.length === 0) {
+    const stagedVehicles = persistSelectedDispatchVehicleForm();
+    if (!selectedRequisition || stagedVehicles.length === 0) {
       setDispatchMessage({ type: 'error', text: 'Add at least one vehicle before submitting.' });
       return;
     }
 
     const existingDispatchedQty = dispatchTotals[selectedRequisition.supply_id] || 0;
-    const stagedDispatchedQty = dispatchVehicles.reduce(
+    const stagedDispatchedQty = stagedVehicles.reduce(
       (total, vehicle) => total + vehicle.actual_dispatched_qty,
       0
     );
@@ -517,7 +584,7 @@ const ProductionView: React.FC = () => {
     setDispatchMessage(null);
 
     try {
-      for (const vehicle of dispatchVehicles) {
+      for (const vehicle of stagedVehicles) {
         await productionAPI.createDispatch({
           supply_id: selectedRequisition.supply_id,
           batching_plant_id: vehicle.batching_plant_id,
@@ -554,7 +621,7 @@ const ProductionView: React.FC = () => {
   if (loading) {
     return (
       <div className="flex h-96 items-center justify-center">
-        <div className="h-12 w-12 animate-spin rounded-full border-b-2 border-[#003F72]"></div>
+        <div className="h-12 w-12 animate-spin rounded-full border-b-2 border-[#134377]"></div>
       </div>
     );
   }
@@ -588,6 +655,7 @@ const ProductionView: React.FC = () => {
               <th className={tableHeaderClass}>Supply ID</th>
               <th className={tableHeaderClass}>Date</th>
               <th className={tableHeaderClass}>Location</th>
+              <th className={tableHeaderClass}>Ordered By</th>
               <th className={tableHeaderClass}>Structure</th>
               <th className={tableHeaderClass}>Grade</th>
               <th className={numericTableHeaderClass}>Requested Qty</th>
@@ -601,6 +669,7 @@ const ProductionView: React.FC = () => {
                 <td className="px-4 py-3 font-mono text-sm">{req.supply_id}</td>
                 <td className="px-4 py-3 text-sm">{formatOrderDate(req)}</td>
                 <td className="px-4 py-3 text-sm">{req.location}</td>
+                <td className="px-4 py-3 text-sm">{req.placed_by_name || req.placed_by_email || '-'}</td>
                 <td className="px-4 py-3 text-sm">{req.structure_name}</td>
                 <td className="px-4 py-3 text-sm">{req.grade}</td>
                 <td className="px-4 py-3 text-right text-sm">{req.requested_qty.toFixed(2)}</td>
@@ -619,7 +688,7 @@ const ProductionView: React.FC = () => {
 
             {filteredRequisitions.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-500">
+                <td colSpan={9} className="px-4 py-8 text-center text-sm text-gray-500">
                   No approved requisitions ready for dispatch
                 </td>
               </tr>
@@ -635,6 +704,7 @@ const ProductionView: React.FC = () => {
               <th className={tableHeaderClass}>Supply ID</th>
               <th className={tableHeaderClass}>Date</th>
               <th className={tableHeaderClass}>Location</th>
+              <th className={tableHeaderClass}>Ordered By</th>
               <th className={tableHeaderClass}>Vehicles</th>
               <th className={tableHeaderClass}>Plants</th>
               <th className={numericTableHeaderClass}>Qty Dispatched</th>
@@ -648,6 +718,7 @@ const ProductionView: React.FC = () => {
                 <td className="px-4 py-3 font-mono text-sm">{order.supply_id}</td>
                 <td className="px-4 py-3 text-sm">{formatOrderDate(order.requisition)}</td>
                 <td className="px-4 py-3 text-sm">{order.requisition.location}</td>
+                <td className="px-4 py-3 text-sm">{order.requisition.placed_by_name || order.requisition.placed_by_email || '-'}</td>
                 <td className="px-4 py-3 text-sm">
                   {order.dispatches.map((dispatch) => dispatch.tm_number).join(', ')}
                 </td>
@@ -672,7 +743,7 @@ const ProductionView: React.FC = () => {
 
             {filteredReturnOrders.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-500">
+                <td colSpan={9} className="px-4 py-8 text-center text-sm text-gray-500">
                   No acknowledged dispatches waiting for return to plant
                 </td>
               </tr>
@@ -709,7 +780,7 @@ const ProductionView: React.FC = () => {
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4">
               <div>
                 <h2 className="text-xl font-bold text-gray-900">Dispatch Order</h2>
-                <p className="font-mono text-sm font-semibold text-[#003F72]">
+                <p className="font-mono text-sm font-semibold text-[#134377]">
                   {selectedRequisition.supply_id}
                 </p>
               </div>
@@ -730,7 +801,7 @@ const ProductionView: React.FC = () => {
 
             <div className="grid gap-6 p-6 xl:grid-cols-[340px_1fr]">
               <aside className="h-fit rounded-lg border border-gray-200 bg-gray-50 p-4">
-                <h3 className="mb-4 text-sm font-bold uppercase tracking-wide text-[#003F72]">
+                <h3 className="mb-4 text-sm font-bold uppercase tracking-wide text-[#134377]">
                   Dispatch Summary
                 </h3>
 
@@ -741,7 +812,7 @@ const ProductionView: React.FC = () => {
                   </div>
                   <div className="rounded-md bg-white px-3 py-2 shadow-sm">
                     <dt className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Qty Dispatched</dt>
-                    <dd className="mt-1 text-lg font-bold text-[#003F72]">{dispatchSummary.dispatchedQty.toFixed(2)} cum</dd>
+                    <dd className="mt-1 text-lg font-bold text-[#134377]">{dispatchSummary.dispatchedQty.toFixed(2)} cum</dd>
                   </div>
                   <div className="rounded-md bg-white px-3 py-2 shadow-sm">
                     <dt className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Remaining Qty</dt>
@@ -761,7 +832,7 @@ const ProductionView: React.FC = () => {
                         onClick={() => selectDispatchVehicle(vehicle)}
                         className={`w-full rounded-md border px-3 py-2 text-left shadow-sm transition-colors duration-150 ease-out ${
                           selectedDispatchVehicleId === vehicle.vehicle_id
-                            ? 'border-[#003F72] bg-blue-50'
+                            ? 'border-[#134377] bg-blue-50'
                             : 'border-gray-200 bg-white hover:bg-blue-50/45'
                         }`}
                       >
@@ -772,7 +843,7 @@ const ProductionView: React.FC = () => {
                             </p>
                             <p className="text-xs text-gray-500">{vehicle.batching_plant_id || '-'}</p>
                           </div>
-                          <span className="shrink-0 text-sm font-semibold text-[#003F72]">
+                          <span className="shrink-0 text-sm font-semibold text-[#134377]">
                             {vehicle.actual_dispatched_qty.toFixed(2)}
                           </span>
                         </div>
@@ -796,7 +867,7 @@ const ProductionView: React.FC = () => {
 
               <div className="min-w-0 space-y-6">
                 <section className="space-y-4">
-                  <h3 className="text-sm font-bold uppercase tracking-wide text-[#003F72]">
+                  <h3 className="text-sm font-bold uppercase tracking-wide text-[#134377]">
                     Order Details
                   </h3>
                   <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -804,6 +875,7 @@ const ProductionView: React.FC = () => {
                       ['Date', formatOrderDate(selectedRequisition)],
                       ['Supply ID', selectedRequisition.supply_id],
                       ['Location', selectedRequisition.location],
+                      ['Ordered By', selectedRequisition.placed_by_name || selectedRequisition.placed_by_email],
                       ['In-Charge', selectedRequisition.selected_in_charge || selectedRequisition.in_charge_name || userNames[selectedRequisition.in_charge_id] || selectedRequisition.in_charge_id],
                       ['Engineer', selectedRequisition.contact_person],
                       ['Structure Name', selectedRequisition.structure_name],
@@ -825,7 +897,7 @@ const ProductionView: React.FC = () => {
                 </section>
 
                 <section className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-                  <h3 className="mb-4 text-sm font-bold uppercase tracking-wide text-[#003F72]">
+                  <h3 className="mb-4 text-sm font-bold uppercase tracking-wide text-[#134377]">
                     Add Dispatch Details
                   </h3>
 
@@ -908,7 +980,7 @@ const ProductionView: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => clearVehicleForm()}
-                          className="mr-3 rounded-md border border-[#003F72] px-5 py-3 text-sm font-semibold text-[#003F72] hover:bg-[#003F72]/10"
+                          className="mr-3 rounded-md border border-[#134377] px-5 py-3 text-sm font-semibold text-[#134377] hover:bg-[#134377]/10"
                         >
                           New Vehicle
                         </button>
@@ -916,7 +988,7 @@ const ProductionView: React.FC = () => {
                       <button
                         type="submit"
                         disabled={dispatching}
-                        className="rounded-md bg-[#003F72] px-5 py-3 text-sm font-semibold text-white hover:bg-[#002B4E] disabled:bg-gray-400"
+                        className="rounded-md bg-[#134377] px-5 py-3 text-sm font-semibold text-white hover:bg-[#134377] disabled:bg-gray-400"
                       >
                         {dispatching ? 'Saving...' : selectedDispatchVehicleId ? 'Update Vehicle' : 'Add Vehicle'}
                       </button>
@@ -946,16 +1018,13 @@ const ProductionView: React.FC = () => {
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4">
               <div>
                 <h2 className="text-xl font-bold text-gray-900">Return to Plant</h2>
-                <p className="font-mono text-sm font-semibold text-[#003F72]">
+                <p className="font-mono text-sm font-semibold text-[#134377]">
                   {selectedReturnOrder.supply_id}
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  setSelectedReturnOrder(null);
-                  setSelectedReturnDispatchId(null);
-                }}
+                onClick={closeReturnToPlant}
                 className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700"
               >
                 Close
@@ -964,7 +1033,7 @@ const ProductionView: React.FC = () => {
 
             <div className="grid gap-6 p-6 xl:grid-cols-[340px_1fr]">
               <aside className="h-fit rounded-lg border border-gray-200 bg-gray-50 p-4">
-                <h3 className="mb-4 text-sm font-bold uppercase tracking-wide text-[#003F72]">
+                <h3 className="mb-4 text-sm font-bold uppercase tracking-wide text-[#134377]">
                   Vehicle Summary
                 </h3>
 
@@ -980,7 +1049,7 @@ const ProductionView: React.FC = () => {
                         onClick={() => selectReturnDispatch(dispatch)}
                         className={`w-full rounded-md border px-3 py-2 text-left shadow-sm transition-colors duration-150 ease-out ${
                           selectedReturnDispatch?.dispatch_id === dispatch.dispatch_id
-                            ? 'border-[#003F72] bg-blue-50'
+                            ? 'border-[#134377] bg-blue-50'
                             : 'border-gray-200 bg-white hover:bg-blue-50/45'
                         }`}
                       >
@@ -991,7 +1060,7 @@ const ProductionView: React.FC = () => {
                             </p>
                             <p className="text-xs text-gray-500">{dispatch.batching_plant_id || '-'}</p>
                           </div>
-                          <span className="shrink-0 text-sm font-semibold text-[#003F72]">
+                          <span className="shrink-0 text-sm font-semibold text-[#134377]">
                             {dispatch.actual_dispatched_qty.toFixed(2)}
                           </span>
                         </div>
@@ -1006,7 +1075,7 @@ const ProductionView: React.FC = () => {
 
               <div className="min-w-0 space-y-6">
                 <section className="h-fit space-y-4">
-                  <h3 className="text-sm font-bold uppercase tracking-wide text-[#003F72]">
+                  <h3 className="text-sm font-bold uppercase tracking-wide text-[#134377]">
                     Dispatch Details
                   </h3>
                   <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -1022,7 +1091,7 @@ const ProductionView: React.FC = () => {
                 </section>
 
                 <section className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-                  <h3 className="mb-4 text-sm font-bold uppercase tracking-wide text-[#003F72]">
+                  <h3 className="mb-4 text-sm font-bold uppercase tracking-wide text-[#134377]">
                     Plant Return
                   </h3>
 
@@ -1061,7 +1130,7 @@ const ProductionView: React.FC = () => {
                       <button
                         type="submit"
                         disabled={returning}
-                        className="rounded-md bg-[#003F72] px-5 py-3 text-sm font-semibold text-white hover:bg-[#002B4E] disabled:bg-gray-400"
+                        className="rounded-md bg-[#134377] px-5 py-3 text-sm font-semibold text-white hover:bg-[#134377] disabled:bg-gray-400"
                       >
                         {returning ? 'Submitting...' : 'Submit'}
                       </button>

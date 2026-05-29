@@ -1,6 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { productionAPI } from '../api';
-import { formatAllocationDestinations, getAllocatedQty, getRemainingQty } from '../dispatchUtils';
+import {
+  formatAllocationDestinations,
+  getAllocatedQty,
+  getPendingSecondaryQty,
+  getRemainingQty,
+  getReturnedWastageQty,
+  getUnresolvedRemainingQty,
+} from '../dispatchUtils';
 import { formatDateTimeIST, parseApiDateTime } from '../timeUtils';
 import { ConcreteRequisition, ProductionDispatch } from '../types';
 import CollapsibleTableSection from './CollapsibleTableSection';
@@ -71,7 +78,7 @@ const RequisitionFullDetails: React.FC<RequisitionFullDetailsProps> = ({
       />
 
       <section className="space-y-3">
-        <h3 className="border-b border-gray-200 pb-1 text-xs font-bold uppercase tracking-wide text-[#003F72]">
+        <h3 className="border-b border-gray-200 pb-1 text-xs font-bold uppercase tracking-wide text-[#134377]">
           Lifecycle Details
         </h3>
         <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -94,51 +101,71 @@ const RequisitionFullDetails: React.FC<RequisitionFullDetailsProps> = ({
         <table className="w-full min-w-[1100px]">
           <thead className="bg-gray-100">
             <tr>
-              <th className="px-3 py-2 text-left text-xs font-bold uppercase text-[#003F72]">Vehicle</th>
-              <th className="px-3 py-2 text-left text-xs font-bold uppercase text-[#003F72]">Batching Plant</th>
-              <th className="px-3 py-2 text-right text-xs font-bold uppercase text-[#003F72]">Qty</th>
-              <th className="px-3 py-2 text-right text-xs font-bold uppercase text-[#003F72]">Deposited</th>
-              <th className="px-3 py-2 text-right text-xs font-bold uppercase text-[#003F72]">Remaining</th>
-              <th className="px-3 py-2 text-left text-xs font-bold uppercase text-[#003F72]">Dispatch Time</th>
-              <th className="px-3 py-2 text-left text-xs font-bold uppercase text-[#003F72]">Deposits</th>
-              <th className="px-3 py-2 text-left text-xs font-bold uppercase text-[#003F72]">Receipt at Site</th>
-              <th className="px-3 py-2 text-left text-xs font-bold uppercase text-[#003F72]">Release from Site</th>
-              <th className="px-3 py-2 text-left text-xs font-bold uppercase text-[#003F72]">Return to Plant</th>
-              <th className="px-3 py-2 text-left text-xs font-bold uppercase text-[#003F72]">Remarks</th>
+              <th className="px-3 py-2 text-left text-xs font-bold uppercase text-[#134377]">Vehicle</th>
+              <th className="px-3 py-2 text-left text-xs font-bold uppercase text-[#134377]">Batching Plant</th>
+              <th className="px-3 py-2 text-right text-xs font-bold uppercase text-[#134377]">Qty</th>
+              <th className="px-3 py-2 text-right text-xs font-bold uppercase text-[#134377]">Deposited</th>
+              <th className="px-3 py-2 text-right text-xs font-bold uppercase text-[#134377]">Remaining</th>
+              <th className="px-3 py-2 text-right text-xs font-bold uppercase text-[#134377]">Wastage</th>
+              <th className="px-3 py-2 text-left text-xs font-bold uppercase text-[#134377]">Dispatch Time</th>
+              <th className="px-3 py-2 text-left text-xs font-bold uppercase text-[#134377]">Deposits</th>
+              <th className="px-3 py-2 text-left text-xs font-bold uppercase text-[#134377]">Receipt at Site</th>
+              <th className="px-3 py-2 text-left text-xs font-bold uppercase text-[#134377]">Release from Site</th>
+              <th className="px-3 py-2 text-left text-xs font-bold uppercase text-[#134377]">Return to Plant</th>
+              <th className="px-3 py-2 text-left text-xs font-bold uppercase text-[#134377]">Remarks</th>
             </tr>
           </thead>
           <tbody>
-            {dispatches.map((dispatch) => (
-              <tr key={dispatch.dispatch_id} className="border-t border-gray-100">
-                <td className="px-3 py-2 text-sm font-semibold text-gray-900">{display(dispatch.tm_number)}</td>
-                <td className="px-3 py-2 text-sm text-gray-700">{display(dispatch.batching_plant_id)}</td>
-                <td className="px-3 py-2 text-right text-sm text-gray-700">
-                  {display(dispatch.actual_dispatched_qty)}
-                </td>
-                <td className="px-3 py-2 text-right text-sm text-gray-700">
-                  {getAllocatedQty(dispatch).toFixed(2)}
-                </td>
-                <td className="px-3 py-2 text-right text-sm text-gray-700">
-                  {getRemainingQty(dispatch).toFixed(2)}
-                </td>
-                <td className="px-3 py-2 text-sm text-gray-700">{formatDateTimeIST(dispatch.dispatch_time)}</td>
-                <td className="px-3 py-2 text-sm text-gray-700">{formatAllocationDestinations(dispatch)}</td>
-                <td className="px-3 py-2 text-sm text-gray-700">
-                  {formatDateTimeIST(dispatch.receipt_at_site_time)}
-                </td>
-                <td className="px-3 py-2 text-sm text-gray-700">
-                  {formatDateTimeIST(dispatch.release_from_site_time)}
-                </td>
-                <td className="px-3 py-2 text-sm text-gray-700">
-                  {formatDateTimeIST(dispatch.return_to_plant_time)}
-                </td>
-                <td className="px-3 py-2 text-sm text-gray-700">{display(dispatch.remarks)}</td>
-              </tr>
-            ))}
+            {dispatches.map((dispatch) => {
+              const pendingSecondary = getPendingSecondaryQty(dispatch);
+              const unresolvedRemaining = getUnresolvedRemainingQty(dispatch);
+              const returnedWastage = getReturnedWastageQty(dispatch);
+              const hasRemainingConcrete = pendingSecondary > 0.0001 || unresolvedRemaining > 0.0001;
+              const hasWastage = returnedWastage > 0.0001 || unresolvedRemaining > 0.0001;
+              return (
+                <tr
+                  key={dispatch.dispatch_id}
+                  className={`border-t border-gray-100 ${hasWastage ? 'bg-amber-50/70' : hasRemainingConcrete ? 'bg-blue-50/50' : ''}`}
+                >
+                  <td className="px-3 py-2 text-sm font-semibold text-gray-900">{display(dispatch.tm_number)}</td>
+                  <td className="px-3 py-2 text-sm text-gray-700">{display(dispatch.batching_plant_id)}</td>
+                  <td className="px-3 py-2 text-right text-sm text-gray-700">
+                    {display(dispatch.actual_dispatched_qty)}
+                  </td>
+                  <td className="px-3 py-2 text-right text-sm text-gray-700">
+                    {getAllocatedQty(dispatch).toFixed(2)}
+                  </td>
+                  <td className={`px-3 py-2 text-right text-sm font-semibold ${hasRemainingConcrete ? 'text-amber-700' : 'text-gray-700'}`}>
+                    {getRemainingQty(dispatch).toFixed(2)}
+                    {pendingSecondary > 0.0001 && (
+                      <span className="block text-[11px] font-medium text-[#134377]">Pending secondary {pendingSecondary.toFixed(2)}</span>
+                    )}
+                    {unresolvedRemaining > 0.0001 && (
+                      <span className="block text-[11px] font-medium text-red-700">Unresolved {unresolvedRemaining.toFixed(2)}</span>
+                    )}
+                  </td>
+                  <td className={`px-3 py-2 text-right text-sm font-semibold ${hasWastage ? 'text-red-700' : 'text-gray-700'}`}>
+                    {(returnedWastage + unresolvedRemaining).toFixed(2)}
+                  </td>
+                  <td className="px-3 py-2 text-sm text-gray-700">{formatDateTimeIST(dispatch.dispatch_time)}</td>
+                  <td className="px-3 py-2 text-sm text-gray-700">{formatAllocationDestinations(dispatch)}</td>
+                  <td className="px-3 py-2 text-sm text-gray-700">
+                    {formatDateTimeIST(dispatch.receipt_at_site_time)}
+                  </td>
+                  <td className="px-3 py-2 text-sm text-gray-700">
+                    {formatDateTimeIST(dispatch.release_from_site_time)}
+                  </td>
+                  <td className="px-3 py-2 text-sm text-gray-700">
+                    {formatDateTimeIST(dispatch.return_to_plant_time)}
+                  </td>
+                  <td className="px-3 py-2 text-sm text-gray-700">{display(dispatch.remarks)}</td>
+                </tr>
+              );
+            })}
 
             {!loadingDispatches && dispatches.length === 0 && (
               <tr>
-                <td colSpan={11} className="px-3 py-6 text-center text-sm text-gray-500">
+                <td colSpan={12} className="px-3 py-6 text-center text-sm text-gray-500">
                   No vehicle details found for this requisition.
                 </td>
               </tr>

@@ -67,6 +67,16 @@ class Settings(BaseSettings):
     API_VERSION: str = "1.0.0"
     AUTH_SESSION_DAYS: int = 7
     SEED_SAMPLE_DATA: bool = True
+
+    # Email notifications. When disabled or SMTP host is empty, notifications
+    # are written to the backend log instead of being sent.
+    EMAIL_ENABLED: bool = False
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_USE_TLS: bool = True
+    MAIL_FROM: str = "no-reply@mvdp.local"
     
     # Business Rules
     ACE_LIMIT_PERCENT: float = 1.0  # Maximum allowed wastage percentage

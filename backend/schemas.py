@@ -30,6 +30,7 @@ class UserCreate(BaseModel):
     email: str = Field(..., min_length=5, max_length=255)
     password: str = Field(..., min_length=8, max_length=128)
     role: UserRole = Field(default=UserRole.EXECUTION)
+    assigned_locations: List[str] = Field(default_factory=list)
 
     @field_validator('name')
     @classmethod
@@ -52,6 +53,7 @@ class UserUpdate(BaseModel):
     email: Optional[str] = Field(None, min_length=5, max_length=255)
     password: Optional[str] = Field(None, min_length=8, max_length=128)
     role: Optional[UserRole] = None
+    assigned_locations: Optional[List[str]] = None
     is_email_verified: Optional[bool] = None
 
     @field_validator('name')
@@ -76,6 +78,7 @@ class UserResponse(BaseModel):
     name: str
     email: str
     role: UserRole
+    assigned_locations: List[str] = Field(default_factory=list)
     is_email_verified: bool = False
     created_at: datetime
     
@@ -88,6 +91,7 @@ class RegistrationInviteCreate(BaseModel):
     email: str = Field(..., min_length=5, max_length=255)
     name_hint: Optional[str] = Field(None, max_length=255)
     role: UserRole = Field(default=UserRole.EXECUTION)
+    assigned_locations: List[str] = Field(default_factory=list)
     is_active: bool = True
 
     @field_validator('email')
@@ -102,6 +106,7 @@ class RegistrationInviteCreate(BaseModel):
 class RegistrationInviteUpdate(BaseModel):
     name_hint: Optional[str] = Field(None, max_length=255)
     role: Optional[UserRole] = None
+    assigned_locations: Optional[List[str]] = None
     is_active: Optional[bool] = None
 
 
@@ -110,6 +115,7 @@ class RegistrationInviteResponse(BaseModel):
     email: str
     name_hint: Optional[str] = None
     role: UserRole
+    assigned_locations: List[str] = Field(default_factory=list)
     is_active: bool
     registered_user_id: Optional[str] = None
     registered_at: Optional[datetime] = None
@@ -247,6 +253,9 @@ class ConcreteRequisitionResponse(BaseModel):
     in_charge_id: str
     in_charge_name: Optional[str] = None
     selected_in_charge: Optional[str] = None
+    placed_by_id: Optional[str] = None
+    placed_by_name: Optional[str] = None
+    placed_by_email: Optional[str] = None
     structure_type: Optional[str] = None
     structure_name: str
     structure_id: str
@@ -365,6 +374,10 @@ class ProductionDispatchResponse(BaseModel):
     wastage_qty: Optional[float]
     returned_wastage_qty: float = 0.0
     remaining_concrete_disposition: Optional[str] = None
+    pending_secondary_qty: float = 0.0
+    pending_secondary_receipt_location: Optional[str] = None
+    pending_secondary_receipt_structure_name: Optional[str] = None
+    pending_secondary_receipt_structure_id: Optional[str] = None
     receipt_allocations: List[DispatchReceiptAllocationResponse] = Field(default_factory=list)
     allocated_qty: float = 0.0
     remaining_qty: float = 0.0

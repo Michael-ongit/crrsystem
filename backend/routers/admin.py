@@ -112,6 +112,7 @@ def create_registration_invite(
         role=UserRole(payload.role.value),
         is_active=payload.is_active,
     )
+    invite.assigned_locations = payload.assigned_locations
     db.add(invite)
     db.commit()
     db.refresh(invite)
@@ -137,6 +138,12 @@ def update_registration_invite(
             user = db.query(User).filter(User.id == invite.registered_user_id).first()
             if user:
                 user.role = UserRole(payload.role.value)
+    if payload.assigned_locations is not None:
+        invite.assigned_locations = payload.assigned_locations
+        if invite.registered_user_id:
+            user = db.query(User).filter(User.id == invite.registered_user_id).first()
+            if user:
+                user.assigned_locations = payload.assigned_locations
     if payload.is_active is not None:
         invite.is_active = payload.is_active
     invite.updated_at = now_ist()
@@ -193,6 +200,8 @@ def admin_update_user(
         user.name = payload.name
     if payload.role is not None:
         user.role = UserRole(payload.role.value)
+    if payload.assigned_locations is not None:
+        user.assigned_locations = payload.assigned_locations
     if payload.is_email_verified is not None:
         user.is_email_verified = payload.is_email_verified
     if payload.password:

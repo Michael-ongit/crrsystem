@@ -25,7 +25,7 @@ const DetailItem: React.FC<{ label: string; value: unknown }> = ({ label, value 
 
 const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
   <section className="space-y-3">
-    <h3 className="border-b border-gray-200 pb-1 text-xs font-bold uppercase tracking-wide text-[#003F72]">
+    <h3 className="border-b border-gray-200 pb-1 text-xs font-bold uppercase tracking-wide text-[#134377]">
       {title}
     </h3>
     <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">{children}</dl>
@@ -67,6 +67,7 @@ const RequisitionDetails: React.FC<RequisitionDetailsProps> = ({
     <Section title="Order and Contact Details">
       <DetailItem label="Reason for Difference" value={requisition.difference_reason} />
       <DetailItem label="Order Quantity (cum)" value={requisition.requested_qty} />
+      <DetailItem label="Ordered By" value={requisition.placed_by_name || requisition.placed_by_email} />
       <DetailItem label="Time of Pour" value={requisition.pour_time} />
       <DetailItem label="Placement By" value={requisition.placement_by} />
       <DetailItem label="Contact Person / Engineer" value={requisition.contact_person} />

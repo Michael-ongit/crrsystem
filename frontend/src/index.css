@@ -71,7 +71,7 @@ input:focus,
 select:focus,
 textarea:focus {
   outline: none;
-  box-shadow: 0 0 0 3px rgba(0, 63, 114, 0.12);
+  box-shadow: 0 0 0 3px rgba(19, 67, 119, 0.12);
 }
 
 /* Alert styles */
@@ -102,5 +102,5 @@ textarea:focus {
 .alert-info {
   background-color: #dbeafe;
   color: #0c2d6b;
-  border-left: 4px solid #003F72;
+  border-left: 4px solid #134377;
 }

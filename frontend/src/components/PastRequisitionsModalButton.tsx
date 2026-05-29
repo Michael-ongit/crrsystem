@@ -33,7 +33,7 @@ const PastRequisitionsModalButton: React.FC<PastRequisitionsModalButtonProps> = 
       <button
         type="button"
         onClick={() => setIsOpen(true)}
-        className="fixed bottom-6 right-6 z-30 rounded-md bg-[#003F72] px-5 py-3 text-sm font-semibold text-white shadow-lg transition-all duration-200 ease-out hover:bg-[#002B4E] hover:shadow-xl"
+        className="fixed bottom-6 right-6 z-30 rounded-md bg-[#134377] px-5 py-3 text-sm font-semibold text-white shadow-lg transition-all duration-200 ease-out hover:bg-[#134377] hover:shadow-xl"
       >
         Past Requisitions ({requisitions.length})
       </button>
@@ -67,6 +67,7 @@ const PastRequisitionsModalButton: React.FC<PastRequisitionsModalButtonProps> = 
                 title="Past Requisitions"
                 emptyText="No fully reconciled requisitions found."
                 onView={setViewingOrder}
+                enableDownload
               />
             </div>
           </div>

@@ -131,6 +131,7 @@ def register_user(payload: RegisterRequest, db: Session = Depends(get_db)):
             password_hash=hash_password(payload.password),
             is_email_verified=True,
         )
+        user.assigned_locations = invite.assigned_locations
 
         db.add(user)
         db.flush()

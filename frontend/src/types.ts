@@ -20,6 +20,7 @@ export interface User {
   name: string;
   email: string;
   role: UserRole;
+  assigned_locations: string[];
   is_email_verified: boolean;
   created_at: string;
 }
@@ -45,6 +46,9 @@ export interface ConcreteRequisition {
   in_charge_id: string;
   in_charge_name?: string;
   selected_in_charge?: string;
+  placed_by_id?: string;
+  placed_by_name?: string;
+  placed_by_email?: string;
   structure_type?: string;
   structure_name: string;
   structure_id: string;
@@ -145,6 +149,10 @@ export interface ProductionDispatch {
   wastage_qty?: number;
   returned_wastage_qty?: number;
   remaining_concrete_disposition?: string;
+  pending_secondary_qty?: number;
+  pending_secondary_receipt_location?: string;
+  pending_secondary_receipt_structure_name?: string;
+  pending_secondary_receipt_structure_id?: string;
   receipt_allocations?: DispatchReceiptAllocation[];
   allocated_qty?: number;
   remaining_qty?: number;
@@ -195,6 +203,7 @@ export interface RegistrationInvite {
   email: string;
   name_hint?: string;
   role: UserRole;
+  assigned_locations: string[];
   is_active: boolean;
   registered_user_id?: string;
   registered_at?: string;

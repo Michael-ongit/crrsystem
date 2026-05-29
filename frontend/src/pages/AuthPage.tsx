@@ -73,7 +73,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin }) => {
             type="button"
             onClick={() => setMode('login')}
             className={`py-2 rounded text-sm font-semibold ${
-              mode === 'login' ? 'bg-[#003F72] text-white' : 'bg-gray-100 text-gray-700'
+              mode === 'login' ? 'bg-[#134377] text-white' : 'bg-gray-100 text-gray-700'
             }`}
           >
             Login
@@ -82,7 +82,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin }) => {
             type="button"
             onClick={() => setMode('register')}
             className={`py-2 rounded text-sm font-semibold ${
-              mode === 'register' ? 'bg-[#003F72] text-white' : 'bg-gray-100 text-gray-700'
+              mode === 'register' ? 'bg-[#134377] text-white' : 'bg-gray-100 text-gray-700'
             }`}
           >
             Register
@@ -95,7 +95,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin }) => {
               message.type === 'success'
                 ? 'bg-green-50 text-green-700 border-green-200'
                 : message.type === 'info'
-                  ? 'bg-[#003F72]/10 text-[#003F72] border-[#003F72]/20'
+                  ? 'bg-[#134377]/10 text-[#134377] border-[#134377]/20'
                   : 'bg-red-50 text-red-700 border-red-200'
             }`}
           >
@@ -142,7 +142,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin }) => {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-[#003F72] hover:bg-[#002B4E] disabled:bg-gray-400 text-white font-semibold py-2 rounded"
+            className="w-full bg-[#134377] hover:bg-[#134377] disabled:bg-gray-400 text-white font-semibold py-2 rounded"
           >
             {loading ? 'Please wait...' : mode === 'login' ? 'Login' : 'Register'}
           </button>

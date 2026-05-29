@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { adminAPI } from '../api';
+import Select from 'react-select';
+import { adminAPI, hierarchyAPI } from '../api';
 import {
   AdminSummary,
   DropdownOption,
@@ -11,6 +12,7 @@ import {
 
 type AdminTab = 'overview' | 'access' | 'dropdowns' | 'reference';
 type DropdownCategory = 'concrete_grade' | 'placement_by';
+type ReferenceSortField = 'location' | 'structure_type' | 'structure_name' | 'structure_id' | 'element_id';
 
 const categoryLabels: Record<DropdownCategory, string> = {
   concrete_grade: 'Concrete Grade',
@@ -31,14 +33,37 @@ const emptySummary: AdminSummary = {
 };
 
 const fieldClass =
-  'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-[#003F72] focus:ring-2 focus:ring-[#003F72]/15';
+  'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-[#134377] focus:ring-2 focus:ring-[#134377]/15';
 const primaryButtonClass =
-  'rounded-md bg-[#003F72] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[#002B4E] disabled:bg-gray-400';
+  'rounded-md bg-[#134377] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-[#134377] disabled:bg-gray-400';
 const secondaryButtonClass =
-  'rounded-md border border-[#003F72] px-4 py-2 text-sm font-semibold text-[#003F72] hover:bg-[#003F72]/10 disabled:border-gray-300 disabled:text-gray-400';
+  'rounded-md border border-[#134377] px-4 py-2 text-sm font-semibold text-[#134377] hover:bg-[#134377]/10 disabled:border-gray-300 disabled:text-gray-400';
 const dangerButtonClass =
   'rounded-md bg-red-600 px-3 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:bg-gray-400';
-const tableHeaderClass = 'px-4 py-3 text-left text-xs font-bold uppercase text-[#003F72]';
+const tableHeaderClass = 'px-4 py-3 text-left text-xs font-bold uppercase text-[#134377]';
+type SelectOption = { value: string; label: string };
+
+const toOptions = (values: string[]): SelectOption[] =>
+  Array.from(new Set(values.filter(Boolean)))
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    .map((value) => ({ value, label: value }));
+
+const selectClassNames = {
+  control: (state: any) =>
+    `min-h-[38px] rounded-md border bg-white text-sm shadow-sm ${
+      state.isFocused ? 'border-[#134377] ring-2 ring-[#134377]/15' : 'border-gray-300'
+    }`,
+  valueContainer: () => 'px-2',
+  input: () => 'text-sm text-gray-900',
+  placeholder: () => 'text-sm text-gray-400',
+  multiValue: () => 'rounded bg-[#134377]/10',
+  multiValueLabel: () => 'text-xs text-[#134377]',
+  menu: () => 'z-50 rounded-md border border-gray-200 bg-white text-sm shadow-lg',
+  option: (state: any) =>
+    `cursor-pointer px-3 py-2 ${
+      state.isSelected ? 'bg-[#134377] text-white' : state.isFocused ? 'bg-[#134377]/10 text-gray-900' : 'text-gray-900'
+    }`,
+};
 
 const getErrorMessage = (error: any, fallback: string) => {
   const detail = error.response?.data?.detail;
@@ -48,6 +73,14 @@ const getErrorMessage = (error: any, fallback: string) => {
   }
   return fallback;
 };
+
+const parseLocationList = (value: string) =>
+  value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+const formatLocationList = (locations?: string[]) => (locations || []).join(', ');
 
 const AdminView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
@@ -59,19 +92,33 @@ const AdminView: React.FC = () => {
   const [accessSearch, setAccessSearch] = useState('');
   const [dropdownSearch, setDropdownSearch] = useState('');
   const [referenceSearch, setReferenceSearch] = useState('');
+  const [referenceFilters, setReferenceFilters] = useState<Record<ReferenceSortField, string>>({
+    location: '',
+    structure_type: '',
+    structure_name: '',
+    structure_id: '',
+    element_id: '',
+  });
+  const [referenceSort, setReferenceSort] = useState<{ field: ReferenceSortField; direction: 'asc' | 'desc' }>({
+    field: 'location',
+    direction: 'asc',
+  });
   const [dropdownCategory, setDropdownCategory] = useState<DropdownCategory>('concrete_grade');
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [editingInviteId, setEditingInviteId] = useState<string | null>(null);
   const [editingDropdownId, setEditingDropdownId] = useState<string | null>(null);
   const [editingReferenceId, setEditingReferenceId] = useState<number | null>(null);
+  const [locationDrafts, setLocationDrafts] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [locationOptions, setLocationOptions] = useState<SelectOption[]>([]);
 
   const [inviteForm, setInviteForm] = useState({
     email: '',
     name_hint: '',
     role: UserRole.EXECUTION,
+    assigned_locations: '',
     is_active: true,
   });
   const [dropdownForm, setDropdownForm] = useState({
@@ -91,18 +138,21 @@ const AdminView: React.FC = () => {
   const loadAdminData = async () => {
     setLoading(true);
     try {
-      const [summaryData, usersData, inviteData, dropdownData, referenceData] = await Promise.all([
+      const [summaryData, usersData, inviteData, dropdownData, referenceData, locations] = await Promise.all([
         adminAPI.getSummary(),
         adminAPI.getUsers(accessSearch),
         adminAPI.getRegistrationEmails(accessSearch),
         adminAPI.getDropdownOptions(dropdownCategory, dropdownSearch),
         adminAPI.getReferenceElements(referenceSearch),
+        hierarchyAPI.getLocations(),
       ]);
       setSummary(summaryData);
       setUsers(usersData);
+      setLocationDrafts(Object.fromEntries(usersData.map((user) => [user.id, formatLocationList(user.assigned_locations)])));
       setInvites(inviteData);
       setDropdowns(dropdownData);
       setReferenceRows(referenceData);
+      setLocationOptions(toOptions(locations));
     } catch (error) {
       console.error('Failed to load admin data:', error);
       setMessage({ type: 'error', text: 'Failed to load admin data.' });
@@ -117,7 +167,10 @@ const AdminView: React.FC = () => {
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
-      adminAPI.getUsers(accessSearch).then(setUsers).catch(() => undefined);
+      adminAPI.getUsers(accessSearch).then((nextUsers) => {
+        setUsers(nextUsers);
+        setLocationDrafts(Object.fromEntries(nextUsers.map((user) => [user.id, formatLocationList(user.assigned_locations)])));
+      }).catch(() => undefined);
       adminAPI.getRegistrationEmails(accessSearch).then(setInvites).catch(() => undefined);
     }, 250);
     return () => window.clearTimeout(timeoutId);
@@ -142,9 +195,38 @@ const AdminView: React.FC = () => {
     [users]
   );
 
+  const selectedLocationOptions = (value: string) => toOptions(parseLocationList(value));
+
+  const referenceFilterOptions = useMemo(() => {
+    const optionForField = (field: ReferenceSortField) =>
+      toOptions(referenceRows.map((row) => String(row[field] || '')));
+    return {
+      location: optionForField('location'),
+      structure_type: optionForField('structure_type'),
+      structure_name: optionForField('structure_name'),
+      structure_id: optionForField('structure_id'),
+      element_id: optionForField('element_id'),
+    };
+  }, [referenceRows]);
+
+  const filteredReferenceRows = useMemo(() => {
+    return [...referenceRows]
+      .filter((row) =>
+        (Object.entries(referenceFilters) as Array<[ReferenceSortField, string]>).every(([field, value]) =>
+          !value || String(row[field] || '') === value
+        )
+      )
+      .sort((a, b) => {
+        const left = String(a[referenceSort.field] || '');
+        const right = String(b[referenceSort.field] || '');
+        const comparison = left.localeCompare(right, undefined, { numeric: true });
+        return referenceSort.direction === 'asc' ? comparison : -comparison;
+      });
+  }, [referenceFilters, referenceRows, referenceSort]);
+
   const resetInviteForm = () => {
     setEditingInviteId(null);
-    setInviteForm({ email: '', name_hint: '', role: UserRole.EXECUTION, is_active: true });
+    setInviteForm({ email: '', name_hint: '', role: UserRole.EXECUTION, assigned_locations: '', is_active: true });
   };
 
   const saveInvite = async () => {
@@ -155,6 +237,7 @@ const AdminView: React.FC = () => {
         await adminAPI.updateRegistrationEmail(editingInviteId, {
           name_hint: inviteForm.name_hint || undefined,
           role: inviteForm.role,
+          assigned_locations: parseLocationList(inviteForm.assigned_locations),
           is_active: inviteForm.is_active,
         });
         setMessage({ type: 'success', text: 'Registration email updated.' });
@@ -163,6 +246,7 @@ const AdminView: React.FC = () => {
           email: inviteForm.email,
           name_hint: inviteForm.name_hint || undefined,
           role: inviteForm.role,
+          assigned_locations: parseLocationList(inviteForm.assigned_locations),
           is_active: inviteForm.is_active,
         });
         setMessage({ type: 'success', text: 'Registration email added.' });
@@ -182,6 +266,7 @@ const AdminView: React.FC = () => {
       email: invite.email,
       name_hint: invite.name_hint || '',
       role: invite.role,
+      assigned_locations: formatLocationList(invite.assigned_locations),
       is_active: invite.is_active,
     });
   };
@@ -195,6 +280,22 @@ const AdminView: React.FC = () => {
       await loadAdminData();
     } catch (error: any) {
       setMessage({ type: 'error', text: getErrorMessage(error, 'Failed to update user role.') });
+    } finally {
+      setEditingUserId(null);
+    }
+  };
+
+  const updateUserLocations = async (user: User) => {
+    setEditingUserId(user.id);
+    setMessage(null);
+    try {
+      await adminAPI.updateUser(user.id, {
+        assigned_locations: parseLocationList(locationDrafts[user.id] || ''),
+      });
+      setMessage({ type: 'success', text: `${user.name}'s locations updated.` });
+      await loadAdminData();
+    } catch (error: any) {
+      setMessage({ type: 'error', text: getErrorMessage(error, 'Failed to update user locations.') });
     } finally {
       setEditingUserId(null);
     }
@@ -342,7 +443,7 @@ const AdminView: React.FC = () => {
   if (loading) {
     return (
       <div className="flex h-96 items-center justify-center">
-        <div className="h-12 w-12 animate-spin rounded-full border-b-2 border-[#003F72]"></div>
+        <div className="h-12 w-12 animate-spin rounded-full border-b-2 border-[#134377]"></div>
       </div>
     );
   }
@@ -373,7 +474,7 @@ const AdminView: React.FC = () => {
             onClick={() => setActiveTab(tab.id)}
             className={`rounded-md px-4 py-2 text-sm font-semibold ${
               activeTab === tab.id
-                ? 'bg-[#003F72] text-white'
+                ? 'bg-[#134377] text-white'
                 : 'text-gray-700 hover:bg-blue-50'
             }`}
           >
@@ -385,7 +486,7 @@ const AdminView: React.FC = () => {
       {activeTab === 'overview' && (
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
           {[
-            ['Users', summary.users, 'bg-blue-50 text-[#003F72]'],
+            ['Users', summary.users, 'bg-blue-50 text-[#134377]'],
             ['Allowed Emails', summary.active_allowed_emails, 'bg-green-50 text-green-800'],
             ['Dropdown Options', summary.dropdown_options, 'bg-cyan-50 text-cyan-800'],
             ['Reference Rows', summary.reference_rows, 'bg-violet-50 text-violet-800'],
@@ -406,8 +507,8 @@ const AdminView: React.FC = () => {
       {activeTab === 'access' && (
         <section className="space-y-5">
           <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-            <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-[#003F72]">Approved Registration Emails</h2>
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_1fr_160px_120px_120px]">
+            <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-[#134377]">Approved Registration Emails</h2>
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_1fr_1fr_160px_120px_120px]">
               <input
                 className={fieldClass}
                 placeholder="Email allowed to register"
@@ -420,6 +521,21 @@ const AdminView: React.FC = () => {
                 placeholder="Name hint"
                 value={inviteForm.name_hint}
                 onChange={(event) => setInviteForm((form) => ({ ...form, name_hint: event.target.value }))}
+              />
+              <Select
+                classNames={selectClassNames}
+                isMulti
+                isSearchable
+                placeholder="Assigned locations"
+                options={locationOptions}
+                value={selectedLocationOptions(inviteForm.assigned_locations)}
+                onChange={(options) => {
+                  const selected = options as readonly SelectOption[];
+                  setInviteForm((form) => ({
+                    ...form,
+                    assigned_locations: selected.map((option) => option.value).join(', '),
+                  }));
+                }}
               />
               <select
                 className={fieldClass}
@@ -443,7 +559,7 @@ const AdminView: React.FC = () => {
               </button>
             </div>
             {editingInviteId && (
-              <button type="button" onClick={resetInviteForm} className="mt-3 text-sm font-semibold text-[#003F72]">
+              <button type="button" onClick={resetInviteForm} className="mt-3 text-sm font-semibold text-[#134377]">
                 Clear selected email
               </button>
             )}
@@ -459,7 +575,7 @@ const AdminView: React.FC = () => {
           <div className="grid gap-5 xl:grid-cols-2">
             <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
               <div className="border-b border-gray-200 bg-gray-50 px-4 py-3">
-                <h3 className="text-sm font-bold uppercase tracking-wide text-[#003F72]">Registration List</h3>
+                <h3 className="text-sm font-bold uppercase tracking-wide text-[#134377]">Registration List</h3>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[680px]">
@@ -467,6 +583,7 @@ const AdminView: React.FC = () => {
                     <tr>
                       <th className={tableHeaderClass}>Email</th>
                       <th className={tableHeaderClass}>Role</th>
+                      <th className={tableHeaderClass}>Locations</th>
                       <th className={tableHeaderClass}>Status</th>
                       <th className={tableHeaderClass}>Actions</th>
                     </tr>
@@ -479,12 +596,13 @@ const AdminView: React.FC = () => {
                           <p className="text-xs text-gray-500">{invite.name_hint || '-'}</p>
                         </td>
                         <td className="px-4 py-3 text-sm">{invite.role}</td>
+                        <td className="px-4 py-3 text-sm">{formatLocationList(invite.assigned_locations) || '-'}</td>
                         <td className="px-4 py-3 text-sm">
                           <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
                             registeredEmailSet.has(invite.email.toLowerCase())
                               ? 'bg-green-100 text-green-800'
                               : invite.is_active
-                                ? 'bg-blue-100 text-[#003F72]'
+                                ? 'bg-blue-100 text-[#134377]'
                                 : 'bg-gray-100 text-gray-600'
                           }`}>
                             {registeredEmailSet.has(invite.email.toLowerCase()) ? 'Registered' : invite.is_active ? 'Allowed' : 'Disabled'}
@@ -505,7 +623,7 @@ const AdminView: React.FC = () => {
 
             <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
               <div className="border-b border-gray-200 bg-gray-50 px-4 py-3">
-                <h3 className="text-sm font-bold uppercase tracking-wide text-[#003F72]">Existing Users</h3>
+                <h3 className="text-sm font-bold uppercase tracking-wide text-[#134377]">Existing Users</h3>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[640px]">
@@ -513,6 +631,7 @@ const AdminView: React.FC = () => {
                     <tr>
                       <th className={tableHeaderClass}>User</th>
                       <th className={tableHeaderClass}>Role</th>
+                      <th className={tableHeaderClass}>Locations</th>
                       <th className={tableHeaderClass}>Verified</th>
                     </tr>
                   </thead>
@@ -535,6 +654,36 @@ const AdminView: React.FC = () => {
                             ))}
                           </select>
                         </td>
+                        <td className="px-4 py-3">
+                          <div className="flex gap-2">
+                            <div className="min-w-[240px] flex-1">
+                              <Select
+                                classNames={selectClassNames}
+                                isMulti
+                                isSearchable
+                                isDisabled={editingUserId === user.id}
+                                placeholder="Assigned locations"
+                                options={locationOptions}
+                                value={selectedLocationOptions(locationDrafts[user.id] || '')}
+                                onChange={(options) => {
+                                  const selected = options as readonly SelectOption[];
+                                  setLocationDrafts((drafts) => ({
+                                    ...drafts,
+                                    [user.id]: selected.map((option) => option.value).join(', '),
+                                  }));
+                                }}
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              disabled={editingUserId === user.id}
+                              onClick={() => updateUserLocations(user)}
+                              className={secondaryButtonClass}
+                            >
+                              Save
+                            </button>
+                          </div>
+                        </td>
                         <td className="px-4 py-3 text-sm">{user.is_email_verified ? 'Yes' : 'No'}</td>
                       </tr>
                     ))}
@@ -549,7 +698,7 @@ const AdminView: React.FC = () => {
       {activeTab === 'dropdowns' && (
         <section className="space-y-5">
           <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-            <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-[#003F72]">Dropdown Data</h2>
+            <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-[#134377]">Dropdown Data</h2>
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-[180px_1fr_1fr_110px_120px_120px]">
               <select
                 className={fieldClass}
@@ -571,7 +720,7 @@ const AdminView: React.FC = () => {
               <button type="button" disabled={saving} onClick={saveDropdown} className={primaryButtonClass}>{editingDropdownId ? 'Update' : 'Add'}</button>
             </div>
             {editingDropdownId && (
-              <button type="button" onClick={resetDropdownForm} className="mt-3 text-sm font-semibold text-[#003F72]">
+              <button type="button" onClick={resetDropdownForm} className="mt-3 text-sm font-semibold text-[#134377]">
                 Clear selected option
               </button>
             )}
@@ -617,7 +766,7 @@ const AdminView: React.FC = () => {
       {activeTab === 'reference' && (
         <section className="space-y-5">
           <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-            <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-[#003F72]">Location / Structure Reference Data</h2>
+            <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-[#134377]">Location / Structure Reference Data</h2>
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_1fr_1fr_1fr_1fr_120px]">
               <input className={fieldClass} placeholder="Location" value={referenceForm.location} onChange={(event) => setReferenceForm((form) => ({ ...form, location: event.target.value }))} />
               <input className={fieldClass} placeholder="Structure type" value={referenceForm.structure_type} onChange={(event) => setReferenceForm((form) => ({ ...form, structure_type: event.target.value }))} />
@@ -627,13 +776,78 @@ const AdminView: React.FC = () => {
               <button type="button" disabled={saving} onClick={saveReference} className={primaryButtonClass}>{editingReferenceId ? 'Update' : 'Add'}</button>
             </div>
             {editingReferenceId && (
-              <button type="button" onClick={resetReferenceForm} className="mt-3 text-sm font-semibold text-[#003F72]">
+              <button type="button" onClick={resetReferenceForm} className="mt-3 text-sm font-semibold text-[#134377]">
                 Clear selected reference
               </button>
             )}
           </div>
 
           <input className={fieldClass} placeholder="Search location, structure, ID, or element" value={referenceSearch} onChange={(event) => setReferenceSearch(event.target.value)} />
+
+          <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-5">
+              {([
+                ['location', 'Location'],
+                ['structure_type', 'Structure Type'],
+                ['structure_name', 'Structure Name'],
+                ['structure_id', 'Structure ID'],
+                ['element_id', 'Element ID'],
+              ] as Array<[ReferenceSortField, string]>).map(([field, label]) => (
+                <label key={field} className="block">
+                  <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">{label}</span>
+                  <select
+                    className={fieldClass}
+                    value={referenceFilters[field]}
+                    onChange={(event) =>
+                      setReferenceFilters((filters) => ({ ...filters, [field]: event.target.value }))
+                    }
+                  >
+                    <option value="">All</option>
+                    {referenceFilterOptions[field].map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+            </div>
+
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_160px_120px]">
+              <label className="block">
+                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">Sort By</span>
+                <select
+                  className={fieldClass}
+                  value={referenceSort.field}
+                  onChange={(event) =>
+                    setReferenceSort((sort) => ({ ...sort, field: event.target.value as ReferenceSortField }))
+                  }
+                >
+                  <option value="location">Location</option>
+                  <option value="structure_type">Structure Type</option>
+                  <option value="structure_name">Structure Name</option>
+                  <option value="structure_id">Structure ID</option>
+                  <option value="element_id">Element ID</option>
+                </select>
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">Direction</span>
+                <select
+                  className={fieldClass}
+                  value={referenceSort.direction}
+                  onChange={(event) =>
+                    setReferenceSort((sort) => ({ ...sort, direction: event.target.value as 'asc' | 'desc' }))
+                  }
+                >
+                  <option value="asc">Ascending</option>
+                  <option value="desc">Descending</option>
+                </select>
+              </label>
+              <div className="flex items-end text-sm font-semibold text-gray-600">
+                {filteredReferenceRows.length} of {referenceRows.length}
+              </div>
+            </div>
+          </div>
 
           <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
             <table className="w-full min-w-[980px]">
@@ -648,7 +862,7 @@ const AdminView: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {referenceRows.map((row) => (
+                {filteredReferenceRows.map((row) => (
                   <tr key={row.id} className="border-t border-gray-100 hover:bg-blue-50/45">
                     <td className="px-4 py-3 text-sm">{row.location}</td>
                     <td className="px-4 py-3 text-sm">{row.structure_type}</td>

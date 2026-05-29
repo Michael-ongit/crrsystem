@@ -9,8 +9,8 @@ export type RequisitionTableData = Partial<ConcreteRequisition> & {
   display_status?: string;
 };
 
-const headerClass = 'px-4 py-3 text-left text-xs font-bold uppercase text-[#003F72]';
-const numericHeaderClass = 'px-4 py-3 text-right text-xs font-bold uppercase text-[#003F72]';
+const headerClass = 'px-4 py-3 text-left text-xs font-bold uppercase text-[#134377]';
+const numericHeaderClass = 'px-4 py-3 text-right text-xs font-bold uppercase text-[#134377]';
 const cellClass = 'px-4 py-3 text-sm';
 const numericCellClass = 'px-4 py-3 text-right text-sm';
 
@@ -28,7 +28,7 @@ const dateFor = (row: RequisitionTableData) => {
   return '-';
 };
 
-export const requisitionTableDataColumnCount = 27;
+export const requisitionTableDataColumnCount = 28;
 
 export const RequisitionTableHeader: React.FC<{
   includeAction?: boolean;
@@ -56,6 +56,7 @@ export const RequisitionTableHeader: React.FC<{
     <th className={numericHeaderClass}>Order Qty</th>
     <th className={headerClass}>Pour Time</th>
     <th className={headerClass}>Placement By</th>
+    <th className={headerClass}>Ordered By</th>
     <th className={headerClass}>Contact Person</th>
     <th className={headerClass}>Contact Number</th>
     <th className={headerClass}>Status</th>
@@ -95,6 +96,7 @@ export const RequisitionTableCells: React.FC<{
       <td className={numericCellClass}>{display(row.requested_qty)}</td>
       <td className={cellClass}>{display(row.pour_time)}</td>
       <td className={cellClass}>{display(row.placement_by)}</td>
+      <td className={cellClass}>{display(row.placed_by_name || row.placed_by_email)}</td>
       <td className={cellClass}>{display(row.contact_person)}</td>
       <td className={cellClass}>{display(row.contact_number)}</td>
       <td className={cellClass}>{status ? <StatusBadge status={status} /> : '-'}</td>

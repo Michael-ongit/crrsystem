@@ -7,6 +7,14 @@ from models import (
     RequisitionStatus, User, UserRole
 )
 from . import auth
+from email_service import (
+    dispatch_created_email,
+    return_to_plant_email,
+    send_notification,
+    site_acknowledgement_email,
+    users_by_role,
+    users_by_role_and_location,
+)
 from schemas import (
     DeliveryTimeUpdate, DispatchAcknowledgementUpdate, DispatchReconciliationUpdate,
     ProductionDispatchCreate, ProductionDispatchResponse, ReturnToPlantUpdate
@@ -33,6 +41,7 @@ def _allocation_total(dispatch: ProductionDispatch) -> float:
 def _attach_dispatch_quantities(dispatch: ProductionDispatch) -> ProductionDispatch:
     allocated_qty = _allocation_total(dispatch)
     returned_wastage_qty = round(float(dispatch.returned_wastage_qty or 0), 2)
+    dispatch.pending_secondary_qty = round(float(dispatch.pending_secondary_qty or 0), 2)
     dispatch.allocated_qty = allocated_qty
     dispatch.returned_wastage_qty = returned_wastage_qty
     dispatch.remaining_qty = round(
@@ -82,6 +91,40 @@ def _dispatches_for_supply(db: Session, supply_id: str) -> list[ProductionDispat
         .order_by(ProductionDispatch.dispatch_time.asc())
         .all()
     )
+
+
+def _placed_by_user(db: Session, requisition: ConcreteRequisition | None) -> User | None:
+    if not requisition:
+        return None
+    if requisition.placed_by_id:
+        user = db.query(User).filter(User.id == requisition.placed_by_id).first()
+        if user:
+            return user
+    return db.query(User).filter(User.id == requisition.in_charge_id).first()
+
+
+def _execution_can_access_location(user: User, requisition: ConcreteRequisition | None) -> bool:
+    if user.role != UserRole.EXECUTION or not requisition:
+        return True
+    assigned = {location.lower() for location in user.assigned_locations}
+    if assigned:
+        if requisition.location.lower() in assigned:
+            return True
+        return any(
+            (dispatch.pending_secondary_receipt_location or "").lower() in assigned
+            for dispatch in requisition.dispatch_logs
+        )
+    return requisition.in_charge_id == user.id or requisition.placed_by_id == user.id
+
+
+def _require_dispatch_location_access(user: User, requisition: ConcreteRequisition | None) -> None:
+    if user.role == UserRole.ADMIN:
+        return
+    if not _execution_can_access_location(user, requisition):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only access dispatches for your assigned location",
+        )
 
 
 def _update_requisition_workflow_status(
@@ -203,6 +246,20 @@ def create_dispatch(
             f"Dispatch created: {dispatch.supply_id}, TM: {dispatch.tm_number}, "
             f"Wastage: {wastage_percentage:.2f}%"
         )
+        send_notification(
+            subject=f"Concrete dispatched: {dispatch.supply_id}",
+            body=dispatch_created_email(
+                requisition,
+                db_dispatch,
+                cumulative_dispatched_qty,
+                max(0, requisition.requested_qty - cumulative_dispatched_qty),
+            ),
+            recipients=[
+                _placed_by_user(db, requisition),
+                *users_by_role(db, UserRole.PLANNING),
+                *users_by_role(db, UserRole.PRODUCTION, exclude_user_id=current_user.id),
+            ],
+        )
         return _attach_dispatch_quantities(db_dispatch)
         
     except HTTPException:
@@ -223,7 +280,8 @@ def create_dispatch(
 )
 def get_dispatches_by_supply(
     supply_id: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(auth.get_current_user),
 ):
     """
     Get all production dispatch records for a specific supply_id.
@@ -231,6 +289,11 @@ def get_dispatches_by_supply(
     Returns list of all TM dispatches for the given requisition.
     """
     try:
+        requisition = db.query(ConcreteRequisition).filter(
+            ConcreteRequisition.supply_id == supply_id
+        ).first()
+        _require_dispatch_location_access(current_user, requisition)
+
         dispatches = db.query(ProductionDispatch).filter(
             ProductionDispatch.supply_id == supply_id
         ).order_by(ProductionDispatch.dispatch_time.desc()).all()
@@ -256,7 +319,8 @@ def get_dispatches_by_supply(
 def get_all_dispatches(
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(auth.get_current_user),
 ):
     """
     Get all production dispatch records with pagination.
@@ -265,9 +329,19 @@ def get_all_dispatches(
     - **limit**: Maximum number of records to return (default: 100)
     """
     try:
-        dispatches = db.query(ProductionDispatch).order_by(
-            ProductionDispatch.dispatch_time.desc()
-        ).offset(skip).limit(limit).all()
+        query = db.query(ProductionDispatch).join(ConcreteRequisition)
+        if current_user.role == UserRole.EXECUTION:
+            if current_user.assigned_locations:
+                query = query.filter(
+                    (ConcreteRequisition.location.in_(current_user.assigned_locations))
+                    | (ProductionDispatch.pending_secondary_receipt_location.in_(current_user.assigned_locations))
+                )
+            else:
+                query = query.filter(
+                    (ConcreteRequisition.in_charge_id == current_user.id)
+                    | (ConcreteRequisition.placed_by_id == current_user.id)
+                )
+        dispatches = query.order_by(ProductionDispatch.dispatch_time.desc()).offset(skip).limit(limit).all()
         
         return [_attach_dispatch_quantities(dispatch) for dispatch in dispatches]
         
@@ -343,7 +417,7 @@ def acknowledge_dispatch(
     dispatch_id: str,
     acknowledgement: DispatchAcknowledgementUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.PRODUCTION, UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(UserRole.EXECUTION, UserRole.ADMIN)),
 ):
     """Record site acknowledgement while keeping the requisition in dispatched state."""
     try:
@@ -360,6 +434,7 @@ def acknowledge_dispatch(
         requisition = db.query(ConcreteRequisition).filter(
             ConcreteRequisition.supply_id == dispatch.supply_id
         ).first()
+        _require_dispatch_location_access(current_user, requisition)
 
         _attach_dispatch_quantities(dispatch)
         remaining_qty = dispatch.remaining_qty
@@ -369,7 +444,26 @@ def acknowledge_dispatch(
                 detail="This dispatch has already been fully acknowledged"
             )
 
-        if acknowledgement.details_match:
+        has_pending_secondary = float(dispatch.pending_secondary_qty or 0) > QUANTITY_EPSILON
+
+        if acknowledgement.details_match and has_pending_secondary:
+            deposited_qty = remaining_qty
+            receipt_location = (dispatch.pending_secondary_receipt_location or "").strip()
+            receipt_structure_name = (dispatch.pending_secondary_receipt_structure_name or "").strip()
+            receipt_structure_id = (dispatch.pending_secondary_receipt_structure_id or "").strip()
+            missing_pending_fields = []
+            if not receipt_location:
+                missing_pending_fields.append("pending_secondary_receipt_location")
+            if not receipt_structure_name:
+                missing_pending_fields.append("pending_secondary_receipt_structure_name")
+            if not receipt_structure_id:
+                missing_pending_fields.append("pending_secondary_receipt_structure_id")
+            if missing_pending_fields:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Pending secondary acknowledgement is missing: " + ", ".join(missing_pending_fields),
+                )
+        elif acknowledgement.details_match:
             if not requisition:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -437,24 +531,26 @@ def acknowledge_dispatch(
 
         db.add(allocation)
         if remaining_after_deposit > QUANTITY_EPSILON and disposition == "Secondary Location":
-            secondary_allocation = DispatchReceiptAllocation(
-                dispatch=dispatch,
-                deposited_qty=remaining_after_deposit,
-                receipt_location=(acknowledgement.secondary_receipt_location or "").strip(),
-                receipt_structure_name=(acknowledgement.secondary_receipt_structure_name or "").strip(),
-                receipt_structure_id=(acknowledgement.secondary_receipt_structure_id or "").strip(),
-                receipt_at_site_time=to_ist_naive(acknowledgement.receipt_at_site_time),
-                release_from_site_time=to_ist_naive(acknowledgement.release_from_site_time),
-                remarks=acknowledgement.remarks,
-            )
-            db.add(secondary_allocation)
             dispatch.remaining_concrete_disposition = "Secondary Location"
+            dispatch.pending_secondary_qty = remaining_after_deposit
+            dispatch.pending_secondary_receipt_location = (acknowledgement.secondary_receipt_location or "").strip()
+            dispatch.pending_secondary_receipt_structure_name = (acknowledgement.secondary_receipt_structure_name or "").strip()
+            dispatch.pending_secondary_receipt_structure_id = (acknowledgement.secondary_receipt_structure_id or "").strip()
         elif remaining_after_deposit > QUANTITY_EPSILON and disposition == "Back to Plant":
             dispatch.returned_wastage_qty = round(
                 float(dispatch.returned_wastage_qty or 0) + remaining_after_deposit,
                 2,
             )
             dispatch.remaining_concrete_disposition = "Back to Plant"
+            dispatch.pending_secondary_qty = 0
+            dispatch.pending_secondary_receipt_location = None
+            dispatch.pending_secondary_receipt_structure_name = None
+            dispatch.pending_secondary_receipt_structure_id = None
+        elif remaining_after_deposit <= QUANTITY_EPSILON:
+            dispatch.pending_secondary_qty = 0
+            dispatch.pending_secondary_receipt_location = None
+            dispatch.pending_secondary_receipt_structure_name = None
+            dispatch.pending_secondary_receipt_structure_id = None
 
         db.flush()
         db.refresh(dispatch)
@@ -467,6 +563,27 @@ def acknowledge_dispatch(
 
         db.commit()
         db.refresh(dispatch)
+        if requisition:
+            db.refresh(dispatch)
+            send_notification(
+                subject=f"Concrete received/released at site: {dispatch.supply_id}",
+                body=site_acknowledgement_email(
+                    requisition,
+                    dispatch,
+                    deposited_qty,
+                    remaining_after_deposit,
+                ),
+                recipients=[
+                    *users_by_role(db, UserRole.PRODUCTION),
+                    *users_by_role(db, UserRole.PLANNING),
+                    *users_by_role_and_location(
+                        db,
+                        UserRole.EXECUTION,
+                        requisition.location,
+                        exclude_user_id=current_user.id,
+                    ),
+                ],
+            )
         return _attach_dispatch_quantities(dispatch)
 
     except HTTPException:
@@ -523,6 +640,15 @@ def update_return_to_plant(
 
         db.commit()
         db.refresh(dispatch)
+        if requisition:
+            send_notification(
+                subject=f"Concrete returned to plant: {dispatch.supply_id}",
+                body=return_to_plant_email(requisition, dispatch),
+                recipients=[
+                    *users_by_role(db, UserRole.PLANNING),
+                    *users_by_role(db, UserRole.PRODUCTION, exclude_user_id=current_user.id),
+                ],
+            )
         return _attach_dispatch_quantities(dispatch)
 
     except HTTPException:

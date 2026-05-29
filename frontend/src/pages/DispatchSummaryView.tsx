@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { useForm } from 'react-hook-form';
-import { productionAPI, requisitionAPI, userAPI } from '../api';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Controller, useForm } from 'react-hook-form';
+import Select from 'react-select';
+import { hierarchyAPI, productionAPI, requisitionAPI, userAPI } from '../api';
 import CollapsibleTableSection from '../components/CollapsibleTableSection';
 import PastRequisitionsModalButton from '../components/PastRequisitionsModalButton';
 import PastRequisitionsTable from '../components/PastRequisitionsTable';
@@ -11,7 +12,13 @@ import RequisitionFilters, {
   RequisitionFilterState,
 } from '../components/RequisitionFilters';
 import RequisitionFullDetails from '../components/RequisitionFullDetails';
-import { getAllocatedQty, getRemainingQty, getVehicleRemainingQty, isDispatchFullyAllocated } from '../dispatchUtils';
+import {
+  formatAllocationDestinations,
+  getAllocatedQty,
+  getRemainingQty,
+  getVehicleRemainingQty,
+  isDispatchFullyAllocated,
+} from '../dispatchUtils';
 import {
   combineISTDateTimeForApi,
   formatDateTimeIST,
@@ -19,16 +26,18 @@ import {
   toDateInputIST,
   toTimeInputIST,
 } from '../timeUtils';
-import { ConcreteRequisition, ProductionDispatch, RequisitionStatus } from '../types';
+import { ConcreteRequisition, ProductionDispatch, RequisitionStatus, User, UserRole } from '../types';
 
 interface ReconciliationFormData {
   details_match: boolean;
   deposited_qty?: number;
   remaining_disposition: '' | 'Secondary Location' | 'Back to Plant';
   receipt_location: string;
+  receipt_structure_type: string;
   receipt_structure_name: string;
   receipt_structure_id: string;
   secondary_receipt_location: string;
+  secondary_receipt_structure_type: string;
   secondary_receipt_structure_name: string;
   secondary_receipt_structure_id: string;
   receipt_at_site_date: string;
@@ -44,11 +53,40 @@ interface DispatchOrder {
   requisition: ConcreteRequisition;
 }
 
-const fieldClass =
-  'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-[#003F72] focus:ring-2 focus:ring-[#003F72]/15';
+interface DispatchAckRow {
+  row_id: string;
+  order: DispatchOrder;
+  dispatch: ProductionDispatch;
+  legLabel: string;
+  destination: string;
+  pendingQty: number;
+}
 
-const tableHeaderClass = 'px-4 py-3 text-left text-xs font-bold uppercase text-[#003F72]';
-const numericTableHeaderClass = 'px-4 py-3 text-right text-xs font-bold uppercase text-[#003F72]';
+const fieldClass =
+  'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-[#134377] focus:ring-2 focus:ring-[#134377]/15';
+
+const tableHeaderClass = 'px-4 py-3 text-left text-xs font-bold uppercase text-[#134377]';
+const numericTableHeaderClass = 'px-4 py-3 text-right text-xs font-bold uppercase text-[#134377]';
+type SelectOption = { value: string; label: string };
+const toOptions = (values: string[]): SelectOption[] => values.map((value) => ({ value, label: value }));
+const optionFor = (options: SelectOption[], value?: string) =>
+  options.find((option) => option.value === value) || (value ? { value, label: value } : null);
+
+const selectClassNames = {
+  control: (state: any) =>
+    `min-h-[38px] rounded-md border bg-white text-sm shadow-sm ${
+      state.isFocused ? 'border-[#134377] ring-2 ring-[#134377]/15' : 'border-gray-300'
+    }`,
+  valueContainer: () => 'px-2',
+  input: () => 'text-sm text-gray-900',
+  placeholder: () => 'text-sm text-gray-400',
+  singleValue: () => 'text-sm text-gray-900',
+  menu: () => 'z-50 rounded-md border border-gray-200 bg-white text-sm shadow-lg',
+  option: (state: any) =>
+    `cursor-pointer px-3 py-2 ${
+      state.isSelected ? 'bg-[#134377] text-white' : state.isFocused ? 'bg-[#134377]/10 text-gray-900' : 'text-gray-900'
+    }`,
+};
 
 const today = () => toDateInputIST();
 
@@ -67,7 +105,11 @@ const getErrorMessage = (error: any, fallback: string) => {
   return fallback;
 };
 
-const DispatchSummaryView: React.FC = () => {
+interface DispatchSummaryViewProps {
+  currentUser: User | null;
+}
+
+const DispatchSummaryView: React.FC<DispatchSummaryViewProps> = ({ currentUser }) => {
   const [orders, setOrders] = useState<DispatchOrder[]>([]);
   const [allDispatches, setAllDispatches] = useState<ProductionDispatch[]>([]);
   const [history, setHistory] = useState<ConcreteRequisition[]>([]);
@@ -84,6 +126,8 @@ const DispatchSummaryView: React.FC = () => {
   const {
     register,
     handleSubmit,
+    control,
+    setValue,
     getValues,
     watch,
     formState: { errors },
@@ -91,9 +135,23 @@ const DispatchSummaryView: React.FC = () => {
   } = useForm<ReconciliationFormData>();
 
   const draftStorageKey = 'dispatchReconciliationDrafts';
+  const isResettingAcknowledgementRef = useRef(false);
   const detailsMatch = watch('details_match');
   const depositedQty = watch('deposited_qty');
   const remainingDisposition = watch('remaining_disposition');
+  const receiptLocation = watch('receipt_location');
+  const receiptStructureType = watch('receipt_structure_type');
+  const receiptStructureName = watch('receipt_structure_name');
+  const secondaryReceiptLocation = watch('secondary_receipt_location');
+  const secondaryReceiptStructureType = watch('secondary_receipt_structure_type');
+  const secondaryReceiptStructureName = watch('secondary_receipt_structure_name');
+  const [locationOptions, setLocationOptions] = useState<SelectOption[]>([]);
+  const [receiptStructureTypeOptions, setReceiptStructureTypeOptions] = useState<SelectOption[]>([]);
+  const [receiptStructureNameOptions, setReceiptStructureNameOptions] = useState<SelectOption[]>([]);
+  const [receiptStructureIdOptions, setReceiptStructureIdOptions] = useState<string[]>([]);
+  const [secondaryStructureTypeOptions, setSecondaryStructureTypeOptions] = useState<SelectOption[]>([]);
+  const [secondaryStructureNameOptions, setSecondaryStructureNameOptions] = useState<SelectOption[]>([]);
+  const [secondaryStructureIdOptions, setSecondaryStructureIdOptions] = useState<string[]>([]);
 
   const readDrafts = (): Record<string, ReconciliationFormData> => {
     const rawDrafts = localStorage.getItem(draftStorageKey);
@@ -107,10 +165,14 @@ const DispatchSummaryView: React.FC = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [dispatches, requisitions, users] = await Promise.all([
+      const [dispatches, requisitions, users, locations] = await Promise.all([
         productionAPI.getAllDispatches(0, 200),
-        requisitionAPI.getRequisitions(),
+        requisitionAPI.getRequisitions(
+          undefined,
+          currentUser?.role === UserRole.EXECUTION ? 'assigned' : undefined
+        ),
         userAPI.getUsers(),
+        hierarchyAPI.getLocations(),
       ]);
 
       const requisitionsBySupplyId = new Map(requisitions.map((req) => [req.supply_id, req]));
@@ -160,6 +222,7 @@ const DispatchSummaryView: React.FC = () => {
       );
       setPastRequisitions(requisitions.filter((req) => req.status === RequisitionStatus.RECONCILED));
       setUserNames(Object.fromEntries(users.map((user) => [user.id, user.name])));
+      setLocationOptions(toOptions(locations));
     } catch (error) {
       console.error('Failed to fetch dispatch summary:', error);
       setMessage({ type: 'error', text: 'Failed to load dispatch summary. Please refresh.' });
@@ -170,39 +233,54 @@ const DispatchSummaryView: React.FC = () => {
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [currentUser?.role]);
 
   const resetAcknowledgementForm = (dispatch: ProductionDispatch, order: DispatchOrder | null = selectedOrder) => {
     const draft = readDrafts()[dispatch.dispatch_id];
     const requisition = order?.requisition;
+    const hasPendingSecondary = Number(dispatch.pending_secondary_qty || 0) > 0.0001;
+    isResettingAcknowledgementRef.current = true;
     reset({
-      details_match: draft?.details_match ?? true,
+      details_match: draft?.details_match ?? !hasPendingSecondary,
       deposited_qty: draft?.deposited_qty ?? getRemainingQty(dispatch),
-      remaining_disposition: draft?.remaining_disposition || '',
-      receipt_location: draft?.receipt_location || dispatch.receipt_location || requisition?.location || '',
-      receipt_structure_name: draft?.receipt_structure_name || requisition?.structure_name || '',
-      receipt_structure_id: draft?.receipt_structure_id || requisition?.structure_id || '',
-      secondary_receipt_location: draft?.secondary_receipt_location || '',
-      secondary_receipt_structure_name: draft?.secondary_receipt_structure_name || '',
-      secondary_receipt_structure_id: draft?.secondary_receipt_structure_id || '',
-      receipt_at_site_date: draft?.receipt_at_site_date || (
+      remaining_disposition: draft?.remaining_disposition ?? '',
+      receipt_location: draft?.receipt_location ?? (
+        hasPendingSecondary
+          ? dispatch.pending_secondary_receipt_location
+          : dispatch.receipt_location || requisition?.location
+      ) ?? '',
+      receipt_structure_type: draft?.receipt_structure_type ?? requisition?.structure_type ?? '',
+      receipt_structure_name: draft?.receipt_structure_name ?? (
+        hasPendingSecondary ? dispatch.pending_secondary_receipt_structure_name : requisition?.structure_name
+      ) ?? '',
+      receipt_structure_id: draft?.receipt_structure_id ?? (
+        hasPendingSecondary ? dispatch.pending_secondary_receipt_structure_id : requisition?.structure_id
+      ) ?? '',
+      secondary_receipt_location: draft?.secondary_receipt_location ?? '',
+      secondary_receipt_structure_type: draft?.secondary_receipt_structure_type ?? '',
+      secondary_receipt_structure_name: draft?.secondary_receipt_structure_name ?? '',
+      secondary_receipt_structure_id: draft?.secondary_receipt_structure_id ?? '',
+      receipt_at_site_date: draft?.receipt_at_site_date ?? (
         dispatch.receipt_at_site_time ? toDateInputIST(dispatch.receipt_at_site_time) : today()
       ),
-      receipt_at_site_time: draft?.receipt_at_site_time || (
+      receipt_at_site_time: draft?.receipt_at_site_time ?? (
         dispatch.receipt_at_site_time ? toTimeInputIST(dispatch.receipt_at_site_time) : ''
       ),
-      release_from_site_date: draft?.release_from_site_date || (
+      release_from_site_date: draft?.release_from_site_date ?? (
         dispatch.release_from_site_time ? toDateInputIST(dispatch.release_from_site_time) : today()
       ),
-      release_from_site_time: draft?.release_from_site_time || (
+      release_from_site_time: draft?.release_from_site_time ?? (
         dispatch.release_from_site_time ? toTimeInputIST(dispatch.release_from_site_time) : ''
       ),
-      remarks: draft?.remarks || dispatch.remarks || '',
+      remarks: draft?.remarks ?? dispatch.remarks ?? '',
     });
+    window.setTimeout(() => {
+      isResettingAcknowledgementRef.current = false;
+    }, 0);
   };
 
-  const openReconcile = (order: DispatchOrder) => {
-    const firstDispatch = order.dispatches[0];
+  const openReconcile = (order: DispatchOrder, preferredDispatch?: ProductionDispatch) => {
+    const firstDispatch = preferredDispatch || order.dispatches[0];
     if (!firstDispatch) return;
     setSelectedOrder(order);
     setSelectedDispatchId(firstDispatch.dispatch_id);
@@ -227,6 +305,16 @@ const DispatchSummaryView: React.FC = () => {
       || selectedOrder.dispatches[0]
       || null;
   }, [allDispatches, selectedDispatchId, selectedOrder]);
+
+  const closeAcknowledgement = () => {
+    if (selectedDispatch && !selectedDispatchAcknowledged) {
+      const drafts = readDrafts();
+      drafts[selectedDispatch.dispatch_id] = getValues();
+      writeDrafts(drafts);
+    }
+    setSelectedOrder(null);
+    setSelectedDispatchId(null);
+  };
 
   const saveDraft = () => {
     if (!selectedDispatch) return;
@@ -284,6 +372,66 @@ const DispatchSummaryView: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    if (!receiptLocation) {
+      setReceiptStructureTypeOptions([]);
+      return;
+    }
+    hierarchyAPI.getStructureTypes(receiptLocation)
+      .then((values) => setReceiptStructureTypeOptions(toOptions(values)))
+      .catch((error) => console.error('Failed to fetch receipt structure types:', error));
+  }, [receiptLocation]);
+
+  useEffect(() => {
+    if (!receiptLocation || !receiptStructureType) {
+      setReceiptStructureNameOptions([]);
+      return;
+    }
+    hierarchyAPI.getStructureNames(receiptLocation, receiptStructureType)
+      .then((values) => setReceiptStructureNameOptions(toOptions(values)))
+      .catch((error) => console.error('Failed to fetch receipt structure names:', error));
+  }, [receiptLocation, receiptStructureType]);
+
+  useEffect(() => {
+    if (!receiptLocation || !receiptStructureType || !receiptStructureName) {
+      setReceiptStructureIdOptions([]);
+      return;
+    }
+    hierarchyAPI.getStructureIds(receiptLocation, receiptStructureType, receiptStructureName)
+      .then(setReceiptStructureIdOptions)
+      .catch((error) => console.error('Failed to fetch receipt structure IDs:', error));
+  }, [receiptLocation, receiptStructureName, receiptStructureType]);
+
+  useEffect(() => {
+    if (!secondaryReceiptLocation) {
+      setSecondaryStructureTypeOptions([]);
+      return;
+    }
+    hierarchyAPI.getStructureTypes(secondaryReceiptLocation)
+      .then((values) => setSecondaryStructureTypeOptions(toOptions(values)))
+      .catch((error) => console.error('Failed to fetch secondary structure types:', error));
+  }, [secondaryReceiptLocation]);
+
+  useEffect(() => {
+    if (!secondaryReceiptLocation || !secondaryReceiptStructureType) {
+      setSecondaryStructureNameOptions([]);
+      return;
+    }
+    hierarchyAPI.getStructureNames(secondaryReceiptLocation, secondaryReceiptStructureType)
+      .then((values) => setSecondaryStructureNameOptions(toOptions(values)))
+      .catch((error) => console.error('Failed to fetch secondary structure names:', error));
+  }, [secondaryReceiptLocation, secondaryReceiptStructureType]);
+
+  useEffect(() => {
+    if (!secondaryReceiptLocation || !secondaryReceiptStructureType || !secondaryReceiptStructureName) {
+      setSecondaryStructureIdOptions([]);
+      return;
+    }
+    hierarchyAPI.getStructureIds(secondaryReceiptLocation, secondaryReceiptStructureType, secondaryReceiptStructureName)
+      .then(setSecondaryStructureIdOptions)
+      .catch((error) => console.error('Failed to fetch secondary structure IDs:', error));
+  }, [secondaryReceiptLocation, secondaryReceiptStructureName, secondaryReceiptStructureType]);
+
   const selectedDetails = useMemo(() => {
     if (!selectedOrder || !selectedDispatch) return [];
     const { requisition } = selectedOrder;
@@ -292,6 +440,7 @@ const DispatchSummaryView: React.FC = () => {
       ['Date', formatOrderDate(requisition)],
       ['Supply ID', dispatch.supply_id],
       ['Location', requisition.location],
+      ['Ordered By', requisition.placed_by_name || requisition.placed_by_email],
       ['In-Charge', requisition.selected_in_charge || requisition.in_charge_name || userNames[requisition.in_charge_id] || requisition.in_charge_id],
       ['Engineer', requisition.contact_person],
       ['Structure Name', requisition.structure_name],
@@ -344,6 +493,7 @@ const DispatchSummaryView: React.FC = () => {
     if (!selectedDispatch || selectedDispatchAcknowledged) return undefined;
 
     const subscription = watch((value) => {
+      if (isResettingAcknowledgementRef.current) return;
       const drafts = readDrafts();
       drafts[selectedDispatch.dispatch_id] = value as ReconciliationFormData;
       writeDrafts(drafts);
@@ -358,12 +508,36 @@ const DispatchSummaryView: React.FC = () => {
     return orders.filter((order) => allowedSupplyIds.has(order.requisition.supply_id));
   }, [filters, orders]);
 
+  const filteredAckRows = useMemo<DispatchAckRow[]>(() =>
+    filteredOrders.flatMap((order) =>
+      order.dispatches.map((dispatch) => {
+        const hasPendingSecondary = Number(dispatch.pending_secondary_qty || 0) > 0.0001;
+        const pendingQty = getRemainingQty(dispatch);
+        return {
+          row_id: `${dispatch.dispatch_id}:${hasPendingSecondary ? 'secondary' : 'site'}`,
+          order,
+          dispatch,
+          legLabel: hasPendingSecondary ? 'Secondary Receipt' : 'Site Receipt',
+          destination: hasPendingSecondary
+            ? [
+                dispatch.pending_secondary_receipt_location,
+                dispatch.pending_secondary_receipt_structure_name,
+                dispatch.pending_secondary_receipt_structure_id,
+              ].filter(Boolean).join(' / ')
+            : dispatch.receipt_location || order.requisition.location,
+          pendingQty,
+        };
+      })
+    ),
+    [filteredOrders]
+  );
+
   const filteredHistory = useMemo(() => filterRequisitions(history, filters), [filters, history]);
 
   if (loading) {
     return (
       <div className="flex h-96 items-center justify-center">
-        <div className="h-12 w-12 animate-spin rounded-full border-b-2 border-[#003F72]"></div>
+        <div className="h-12 w-12 animate-spin rounded-full border-b-2 border-[#134377]"></div>
       </div>
     );
   }
@@ -378,8 +552,8 @@ const DispatchSummaryView: React.FC = () => {
         <RequisitionFilters
           filters={filters}
           onChange={setFilters}
-          resultCount={filteredOrders.length + filteredHistory.length}
-          totalCount={orders.length + history.length}
+          resultCount={filteredAckRows.length + filteredHistory.length}
+          totalCount={orders.reduce((total, order) => total + order.dispatches.length, 0) + history.length}
           className="xl:w-fit"
         />
       </div>
@@ -390,45 +564,44 @@ const DispatchSummaryView: React.FC = () => {
         </div>
       )}
 
-      <CollapsibleTableSection title={`Dispatched Orders (${filteredOrders.length})`}>
+      <CollapsibleTableSection title={`Dispatched Orders (${filteredAckRows.length})`}>
         <table className="w-full min-w-[1060px]">
           <thead className="bg-gray-100">
             <tr>
               <th className={tableHeaderClass}>Supply ID</th>
               <th className={tableHeaderClass}>Date</th>
               <th className={tableHeaderClass}>Location</th>
-              <th className={tableHeaderClass}>Vehicles</th>
-              <th className={tableHeaderClass}>Plants</th>
-              <th className={numericTableHeaderClass}>Qty Dispatched</th>
-              <th className={tableHeaderClass}>Pending Ack.</th>
+              <th className={tableHeaderClass}>Ordered By</th>
+              <th className={tableHeaderClass}>Vehicle</th>
+              <th className={tableHeaderClass}>Plant</th>
+              <th className={tableHeaderClass}>Leg</th>
+              <th className={numericTableHeaderClass}>Pending Qty</th>
               <th className={tableHeaderClass}>Destination</th>
               <th className={tableHeaderClass}>Action</th>
             </tr>
           </thead>
           <tbody>
-            {filteredOrders.map((order) => (
-              <tr key={order.supply_id} className="border-t border-gray-100 transition-colors duration-150 ease-out hover:bg-blue-50/45">
-                <td className="px-4 py-3 font-mono text-sm">{order.supply_id}</td>
-                <td className="px-4 py-3 text-sm">{formatOrderDate(order.requisition)}</td>
-                <td className="px-4 py-3 text-sm">{order.requisition.location}</td>
+            {filteredAckRows.map((row) => (
+              <tr key={row.row_id} className="border-t border-gray-100 transition-colors duration-150 ease-out hover:bg-blue-50/45">
+                <td className="px-4 py-3 font-mono text-sm">{row.order.supply_id}</td>
+                <td className="px-4 py-3 text-sm">{formatOrderDate(row.order.requisition)}</td>
+                <td className="px-4 py-3 text-sm">{row.order.requisition.location}</td>
+                <td className="px-4 py-3 text-sm">{row.order.requisition.placed_by_name || row.order.requisition.placed_by_email || '-'}</td>
+                <td className="px-4 py-3 text-sm">{row.dispatch.tm_number}</td>
+                <td className="px-4 py-3 text-sm">{row.dispatch.batching_plant_id || '-'}</td>
+                <td className="px-4 py-3 text-sm">{row.legLabel}</td>
+                <td className="px-4 py-3 text-right text-sm">{row.pendingQty.toFixed(2)}</td>
                 <td className="px-4 py-3 text-sm">
-                  {order.dispatches.map((dispatch) => dispatch.tm_number).join(', ')}
-                </td>
-                <td className="px-4 py-3 text-sm">
-                  {Array.from(new Set(order.dispatches.map((dispatch) => dispatch.batching_plant_id || '-'))).join(', ')}
-                </td>
-                <td className="px-4 py-3 text-right text-sm">
-                  {order.dispatches.reduce((total, dispatch) => total + dispatch.actual_dispatched_qty, 0).toFixed(2)}
-                </td>
-                <td className="px-4 py-3 text-sm">{order.dispatches.length}</td>
-                <td className="px-4 py-3 text-sm">
-                  {Array.from(new Set(order.dispatches.map((dispatch) => dispatch.receipt_location || '-'))).join(', ')}
+                  <div className="max-w-[360px] whitespace-normal">
+                    <p className="font-medium text-gray-900">{row.destination || '-'}</p>
+                    <p className="mt-1 text-xs text-gray-500">{formatAllocationDestinations(row.dispatch)}</p>
+                  </div>
                 </td>
                 <td className="px-4 py-3">
                   <button
                     type="button"
-                    onClick={() => openReconcile(order)}
-                    className="rounded bg-[#003F72] px-3 py-1 text-sm font-semibold text-white shadow-sm transition-all duration-200 ease-out hover:bg-[#002B4E] hover:shadow"
+                    onClick={() => openReconcile(row.order, row.dispatch)}
+                    className="rounded bg-[#134377] px-3 py-1 text-sm font-semibold text-white shadow-sm transition-all duration-200 ease-out hover:bg-[#134377] hover:shadow"
                   >
                     Open
                   </button>
@@ -436,9 +609,9 @@ const DispatchSummaryView: React.FC = () => {
               </tr>
             ))}
 
-            {filteredOrders.length === 0 && (
+            {filteredAckRows.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-4 py-8 text-center text-sm text-gray-500">
+                <td colSpan={10} className="px-4 py-8 text-center text-sm text-gray-500">
                   No dispatched orders waiting for acknowledgement.
                 </td>
               </tr>
@@ -475,16 +648,13 @@ const DispatchSummaryView: React.FC = () => {
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4">
               <div>
                 <h2 className="text-xl font-bold text-gray-900">Acknowledge Dispatch</h2>
-                <p className="font-mono text-sm font-semibold text-[#003F72]">
+                <p className="font-mono text-sm font-semibold text-[#134377]">
                   {selectedOrder.supply_id}
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  setSelectedOrder(null);
-                  setSelectedDispatchId(null);
-                }}
+                onClick={closeAcknowledgement}
                 className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-700"
               >
                 Close
@@ -493,7 +663,7 @@ const DispatchSummaryView: React.FC = () => {
 
             <div className="grid gap-6 p-6 xl:grid-cols-[340px_1fr]">
               <aside className="h-fit rounded-lg border border-gray-200 bg-gray-50 p-4">
-                <h3 className="mb-4 text-sm font-bold uppercase tracking-wide text-[#003F72]">
+                <h3 className="mb-4 text-sm font-bold uppercase tracking-wide text-[#134377]">
                   Vehicle Summary
                 </h3>
 
@@ -506,7 +676,7 @@ const DispatchSummaryView: React.FC = () => {
                   </div>
                   <div className="rounded-md bg-white px-3 py-2 shadow-sm">
                     <dt className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Qty Arrived</dt>
-                    <dd className="mt-1 text-lg font-bold text-[#003F72]">
+                    <dd className="mt-1 text-lg font-bold text-[#134377]">
                       {selectedDispatchSummary.arrivedQty.toFixed(2)} cum
                     </dd>
                   </div>
@@ -531,7 +701,7 @@ const DispatchSummaryView: React.FC = () => {
                           onClick={() => selectDispatch(dispatch)}
                           key={dispatch.dispatch_id}
                           className={`w-full rounded-md border px-3 py-2 text-left shadow-sm transition-colors duration-150 ease-out ${
-                            isActive ? 'border-[#003F72] bg-blue-50' : 'border-gray-200 bg-white hover:bg-blue-50/45'
+                            isActive ? 'border-[#134377] bg-blue-50' : 'border-gray-200 bg-white hover:bg-blue-50/45'
                           }`}
                         >
                           <div className="flex items-start justify-between gap-3">
@@ -541,14 +711,14 @@ const DispatchSummaryView: React.FC = () => {
                               </p>
                               <p className="text-xs text-gray-500">{dispatch.batching_plant_id || '-'}</p>
                             </div>
-                            <span className="shrink-0 text-sm font-semibold text-[#003F72]">
+                            <span className="shrink-0 text-sm font-semibold text-[#134377]">
                               {dispatch.actual_dispatched_qty.toFixed(2)}
                             </span>
                           </div>
                           <p className="mt-2 text-xs text-gray-600">
                             {isDispatchFullyAllocated(dispatch)
-                              ? 'Fully acknowledged'
-                              : `Remaining ${getRemainingQty(dispatch).toFixed(2)} cum`}
+                              ? formatAllocationDestinations(dispatch)
+                              : `${formatAllocationDestinations(dispatch)}; remaining ${getRemainingQty(dispatch).toFixed(2)} cum`}
                           </p>
                         </button>
                       );
@@ -559,7 +729,7 @@ const DispatchSummaryView: React.FC = () => {
 
               <div className="min-w-0 space-y-6">
                 <section className="h-fit space-y-4">
-                  <h3 className="text-sm font-bold uppercase tracking-wide text-[#003F72]">
+                  <h3 className="text-sm font-bold uppercase tracking-wide text-[#134377]">
                     Dispatch Details
                   </h3>
                   <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -575,13 +745,13 @@ const DispatchSummaryView: React.FC = () => {
                 </section>
 
                 <section className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-                  <h3 className="mb-4 text-sm font-bold uppercase tracking-wide text-[#003F72]">
+                  <h3 className="mb-4 text-sm font-bold uppercase tracking-wide text-[#134377]">
                     Site Acknowledgement
                   </h3>
 
                   {selectedDispatchAcknowledged ? (
                     <div className="space-y-4">
-                      <div className="rounded-md border border-blue-100 bg-blue-50 px-3 py-2 text-sm font-medium text-[#003F72]">
+                      <div className="rounded-md border border-blue-100 bg-blue-50 px-3 py-2 text-sm font-medium text-[#134377]">
                         This vehicle has already been acknowledged. Details are view-only.
                       </div>
 
@@ -589,6 +759,11 @@ const DispatchSummaryView: React.FC = () => {
                         {([
                           ['Receipt at Site', formatDateTimeIST(selectedDispatch?.receipt_at_site_time)],
                           ['Release from Site', formatDateTimeIST(selectedDispatch?.release_from_site_time)],
+                          ['Quantity Dispatched', selectedDispatch?.actual_dispatched_qty],
+                          ['Quantity Deposited', selectedDispatch ? getAllocatedQty(selectedDispatch) : undefined],
+                          ['Returned to Plant', selectedDispatch?.returned_wastage_qty],
+                          ['Remaining in Vehicle', selectedDispatch ? getRemainingQty(selectedDispatch) : undefined],
+                          ['Receipt / Secondary Details', selectedDispatch ? formatAllocationDestinations(selectedDispatch) : undefined],
                           ['Remarks', selectedDispatch?.remarks],
                         ] as Array<[string, unknown]>).map(([label, value]) => (
                           <div key={label} className="min-w-0 rounded-md border border-gray-200 bg-white px-3 py-2">
@@ -599,13 +774,42 @@ const DispatchSummaryView: React.FC = () => {
                           </div>
                         ))}
                       </dl>
+
+                      {selectedDispatch?.receipt_allocations?.length ? (
+                        <div className="overflow-hidden rounded-md border border-gray-200 bg-white">
+                          <table className="w-full min-w-[720px]">
+                            <thead className="bg-gray-100">
+                              <tr>
+                                <th className="px-3 py-2 text-left text-xs font-bold uppercase text-[#134377]">Location</th>
+                                <th className="px-3 py-2 text-left text-xs font-bold uppercase text-[#134377]">Structure</th>
+                                <th className="px-3 py-2 text-left text-xs font-bold uppercase text-[#134377]">Structure ID</th>
+                                <th className="px-3 py-2 text-right text-xs font-bold uppercase text-[#134377]">Qty</th>
+                                <th className="px-3 py-2 text-left text-xs font-bold uppercase text-[#134377]">Receipt</th>
+                                <th className="px-3 py-2 text-left text-xs font-bold uppercase text-[#134377]">Release</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {selectedDispatch.receipt_allocations.map((allocation) => (
+                                <tr key={allocation.allocation_id} className="border-t border-gray-100">
+                                  <td className="px-3 py-2 text-sm">{allocation.receipt_location}</td>
+                                  <td className="px-3 py-2 text-sm">{allocation.receipt_structure_name}</td>
+                                  <td className="px-3 py-2 text-sm">{allocation.receipt_structure_id}</td>
+                                  <td className="px-3 py-2 text-right text-sm">{allocation.deposited_qty.toFixed(2)}</td>
+                                  <td className="px-3 py-2 text-sm">{formatDateTimeIST(allocation.receipt_at_site_time)}</td>
+                                  <td className="px-3 py-2 text-sm">{formatDateTimeIST(allocation.release_from_site_time)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : null}
                     </div>
                   ) : (
                     <form onSubmit={handleSubmit(onSubmit)} className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                       <label className="flex items-center gap-3 rounded-md border border-gray-200 bg-white px-3 py-2 lg:col-span-2">
                         <input
                           type="checkbox"
-                          className="h-4 w-4 rounded border-gray-300 text-[#003F72] focus:ring-[#003F72]"
+                          className="h-4 w-4 rounded border-gray-300 text-[#134377] focus:ring-[#134377]"
                           {...register('details_match')}
                         />
                         <span className="text-sm font-semibold text-gray-700">
@@ -619,9 +823,24 @@ const DispatchSummaryView: React.FC = () => {
                             <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
                               Receipt Location
                             </label>
-                            <input
-                              className={fieldClass}
-                              {...register('receipt_location', { required: 'Receipt location is required' })}
+                            <Controller
+                              name="receipt_location"
+                              control={control}
+                              rules={{ required: 'Receipt location is required' }}
+                              render={({ field }) => (
+                                <Select
+                                  classNames={selectClassNames}
+                                  isSearchable
+                                  options={locationOptions}
+                                  value={optionFor(locationOptions, field.value)}
+                                  onChange={(option) => {
+                                    field.onChange(option?.value || '');
+                                    setValue('receipt_structure_type', '');
+                                    setValue('receipt_structure_name', '');
+                                    setValue('receipt_structure_id', '');
+                                  }}
+                                />
+                              )}
                             />
                             {errors.receipt_location && (
                               <p className="mt-1 text-xs text-red-600">{errors.receipt_location.message}</p>
@@ -630,11 +849,49 @@ const DispatchSummaryView: React.FC = () => {
 
                           <div>
                             <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
+                              Receipt Structure Type
+                            </label>
+                            <Controller
+                              name="receipt_structure_type"
+                              control={control}
+                              render={({ field }) => (
+                                <Select
+                                  classNames={selectClassNames}
+                                  isSearchable
+                                  isDisabled={!receiptLocation}
+                                  options={receiptStructureTypeOptions}
+                                  value={optionFor(receiptStructureTypeOptions, field.value)}
+                                  onChange={(option) => {
+                                    field.onChange(option?.value || '');
+                                    setValue('receipt_structure_name', '');
+                                    setValue('receipt_structure_id', '');
+                                  }}
+                                />
+                              )}
+                            />
+                          </div>
+
+                          <div>
+                            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
                               Receipt Structure Name
                             </label>
-                            <input
-                              className={fieldClass}
-                              {...register('receipt_structure_name', { required: 'Receipt structure name is required' })}
+                            <Controller
+                              name="receipt_structure_name"
+                              control={control}
+                              rules={{ required: 'Receipt structure name is required' }}
+                              render={({ field }) => (
+                                <Select
+                                  classNames={selectClassNames}
+                                  isSearchable
+                                  isDisabled={!receiptLocation || !receiptStructureType}
+                                  options={receiptStructureNameOptions}
+                                  value={optionFor(receiptStructureNameOptions, field.value)}
+                                  onChange={(option) => {
+                                    field.onChange(option?.value || '');
+                                    setValue('receipt_structure_id', '');
+                                  }}
+                                />
+                              )}
                             />
                             {errors.receipt_structure_name && (
                               <p className="mt-1 text-xs text-red-600">{errors.receipt_structure_name.message}</p>
@@ -647,8 +904,15 @@ const DispatchSummaryView: React.FC = () => {
                             </label>
                             <input
                               className={fieldClass}
+                              list="receipt-structure-id-options"
+                              disabled={!receiptLocation || !receiptStructureName}
                               {...register('receipt_structure_id', { required: 'Receipt structure ID is required' })}
                             />
+                            <datalist id="receipt-structure-id-options">
+                              {receiptStructureIdOptions.map((value) => (
+                                <option key={value} value={value} />
+                              ))}
+                            </datalist>
                             {errors.receipt_structure_id && (
                               <p className="mt-1 text-xs text-red-600">{errors.receipt_structure_id.message}</p>
                             )}
@@ -687,7 +951,7 @@ const DispatchSummaryView: React.FC = () => {
                                   <input
                                     type="radio"
                                     value="Secondary Location"
-                                    className="h-4 w-4 border-gray-300 text-[#003F72] focus:ring-[#003F72]"
+                                    className="h-4 w-4 border-gray-300 text-[#134377] focus:ring-[#134377]"
                                     {...register('remaining_disposition', {
                                       required: needsRemainingRoute ? 'Choose where the remaining concrete went' : false,
                                     })}
@@ -698,7 +962,7 @@ const DispatchSummaryView: React.FC = () => {
                                   <input
                                     type="radio"
                                     value="Back to Plant"
-                                    className="h-4 w-4 border-gray-300 text-[#003F72] focus:ring-[#003F72]"
+                                    className="h-4 w-4 border-gray-300 text-[#134377] focus:ring-[#134377]"
                                     {...register('remaining_disposition', {
                                       required: needsRemainingRoute ? 'Choose where the remaining concrete went' : false,
                                     })}
@@ -718,11 +982,24 @@ const DispatchSummaryView: React.FC = () => {
                                 <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
                                   Secondary Receipt Location
                                 </label>
-                                <input
-                                  className={fieldClass}
-                                  {...register('secondary_receipt_location', {
-                                    required: 'Secondary receipt location is required',
-                                  })}
+                                <Controller
+                                  name="secondary_receipt_location"
+                                  control={control}
+                                  rules={{ required: 'Secondary receipt location is required' }}
+                                  render={({ field }) => (
+                                    <Select
+                                      classNames={selectClassNames}
+                                      isSearchable
+                                      options={locationOptions}
+                                      value={optionFor(locationOptions, field.value)}
+                                      onChange={(option) => {
+                                        field.onChange(option?.value || '');
+                                        setValue('secondary_receipt_structure_type', '');
+                                        setValue('secondary_receipt_structure_name', '');
+                                        setValue('secondary_receipt_structure_id', '');
+                                      }}
+                                    />
+                                  )}
                                 />
                                 {errors.secondary_receipt_location && (
                                   <p className="mt-1 text-xs text-red-600">{errors.secondary_receipt_location.message}</p>
@@ -731,13 +1008,49 @@ const DispatchSummaryView: React.FC = () => {
 
                               <div>
                                 <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
+                                  Secondary Structure Type
+                                </label>
+                                <Controller
+                                  name="secondary_receipt_structure_type"
+                                  control={control}
+                                  render={({ field }) => (
+                                    <Select
+                                      classNames={selectClassNames}
+                                      isSearchable
+                                      isDisabled={!secondaryReceiptLocation}
+                                      options={secondaryStructureTypeOptions}
+                                      value={optionFor(secondaryStructureTypeOptions, field.value)}
+                                      onChange={(option) => {
+                                        field.onChange(option?.value || '');
+                                        setValue('secondary_receipt_structure_name', '');
+                                        setValue('secondary_receipt_structure_id', '');
+                                      }}
+                                    />
+                                  )}
+                                />
+                              </div>
+
+                              <div>
+                                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
                                   Secondary Structure Name
                                 </label>
-                                <input
-                                  className={fieldClass}
-                                  {...register('secondary_receipt_structure_name', {
-                                    required: 'Secondary structure name is required',
-                                  })}
+                                <Controller
+                                  name="secondary_receipt_structure_name"
+                                  control={control}
+                                  rules={{ required: 'Secondary structure name is required' }}
+                                  render={({ field }) => (
+                                    <Select
+                                      classNames={selectClassNames}
+                                      isSearchable
+                                      isDisabled={!secondaryReceiptLocation || !secondaryReceiptStructureType}
+                                      options={secondaryStructureNameOptions}
+                                      value={optionFor(secondaryStructureNameOptions, field.value)}
+                                      onChange={(option) => {
+                                        field.onChange(option?.value || '');
+                                        setValue('secondary_receipt_structure_id', '');
+                                      }}
+                                    />
+                                  )}
                                 />
                                 {errors.secondary_receipt_structure_name && (
                                   <p className="mt-1 text-xs text-red-600">{errors.secondary_receipt_structure_name.message}</p>
@@ -750,10 +1063,17 @@ const DispatchSummaryView: React.FC = () => {
                                 </label>
                                 <input
                                   className={fieldClass}
+                                  list="secondary-structure-id-options"
+                                  disabled={!secondaryReceiptLocation || !secondaryReceiptStructureName}
                                   {...register('secondary_receipt_structure_id', {
                                     required: 'Secondary structure ID is required',
                                   })}
                                 />
+                                <datalist id="secondary-structure-id-options">
+                                  {secondaryStructureIdOptions.map((value) => (
+                                    <option key={value} value={value} />
+                                  ))}
+                                </datalist>
                                 {errors.secondary_receipt_structure_id && (
                                   <p className="mt-1 text-xs text-red-600">{errors.secondary_receipt_structure_id.message}</p>
                                 )}
@@ -763,50 +1083,52 @@ const DispatchSummaryView: React.FC = () => {
                         </>
                       )}
 
-                      <div>
-                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
-                          Receipt at site
-                        </label>
-                        <div className="grid grid-cols-2 gap-2">
-                          <input
-                            type="date"
-                            className={fieldClass}
-                            {...register('receipt_at_site_date', { required: 'Receipt date is required' })}
-                          />
-                          <input
-                            type="time"
-                            className={fieldClass}
-                            {...register('receipt_at_site_time', { required: 'Receipt time is required' })}
-                          />
+                      <div className="grid grid-cols-1 gap-4 lg:col-span-2 lg:grid-cols-2">
+                        <div>
+                          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
+                            Receipt at site
+                          </label>
+                          <div className="grid grid-cols-2 gap-2">
+                            <input
+                              type="date"
+                              className={fieldClass}
+                              {...register('receipt_at_site_date', { required: 'Receipt date is required' })}
+                            />
+                            <input
+                              type="time"
+                              className={fieldClass}
+                              {...register('receipt_at_site_time', { required: 'Receipt time is required' })}
+                            />
+                          </div>
+                          {(errors.receipt_at_site_date || errors.receipt_at_site_time) && (
+                            <p className="mt-1 text-xs text-red-600">
+                              {errors.receipt_at_site_date?.message || errors.receipt_at_site_time?.message}
+                            </p>
+                          )}
                         </div>
-                        {(errors.receipt_at_site_date || errors.receipt_at_site_time) && (
-                          <p className="mt-1 text-xs text-red-600">
-                            {errors.receipt_at_site_date?.message || errors.receipt_at_site_time?.message}
-                          </p>
-                        )}
-                      </div>
 
-                      <div>
-                        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
-                          Release from site
-                        </label>
-                        <div className="grid grid-cols-2 gap-2">
-                          <input
-                            type="date"
-                            className={fieldClass}
-                            {...register('release_from_site_date', { required: 'Release date is required' })}
-                          />
-                          <input
-                            type="time"
-                            className={fieldClass}
-                            {...register('release_from_site_time', { required: 'Release time is required' })}
-                          />
+                        <div>
+                          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
+                            Release from site
+                          </label>
+                          <div className="grid grid-cols-2 gap-2">
+                            <input
+                              type="date"
+                              className={fieldClass}
+                              {...register('release_from_site_date', { required: 'Release date is required' })}
+                            />
+                            <input
+                              type="time"
+                              className={fieldClass}
+                              {...register('release_from_site_time', { required: 'Release time is required' })}
+                            />
+                          </div>
+                          {(errors.release_from_site_date || errors.release_from_site_time) && (
+                            <p className="mt-1 text-xs text-red-600">
+                              {errors.release_from_site_date?.message || errors.release_from_site_time?.message}
+                            </p>
+                          )}
                         </div>
-                        {(errors.release_from_site_date || errors.release_from_site_time) && (
-                          <p className="mt-1 text-xs text-red-600">
-                            {errors.release_from_site_date?.message || errors.release_from_site_time?.message}
-                          </p>
-                        )}
                       </div>
 
                       <div className="lg:col-span-2">
@@ -821,14 +1143,14 @@ const DispatchSummaryView: React.FC = () => {
                           type="button"
                           onClick={saveDraft}
                           disabled={submitting}
-                          className="rounded-md border border-[#003F72] px-5 py-3 text-sm font-semibold text-[#003F72] hover:bg-[#003F72]/10 disabled:border-gray-300 disabled:text-gray-400"
+                          className="rounded-md border border-[#134377] px-5 py-3 text-sm font-semibold text-[#134377] hover:bg-[#134377]/10 disabled:border-gray-300 disabled:text-gray-400"
                         >
                           Save as Draft
                         </button>
                         <button
                           type="submit"
                           disabled={submitting}
-                          className="rounded-md bg-[#003F72] px-5 py-3 text-sm font-semibold text-white hover:bg-[#002B4E] disabled:bg-gray-400"
+                          className="rounded-md bg-[#134377] px-5 py-3 text-sm font-semibold text-white hover:bg-[#134377] disabled:bg-gray-400"
                         >
                           {submitting ? 'Submitting...' : 'Submit'}
                         </button>

@@ -73,6 +73,7 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     migrate_user_auth_columns()
     migrate_auth_session_columns()
+    migrate_registration_invite_location_columns()
     migrate_concrete_requisition_columns()
     migrate_production_dispatch_columns()
     migrate_dispatch_receipt_allocations()
@@ -202,6 +203,9 @@ def migrate_concrete_requisition_columns():
         ("contact_number", "VARCHAR(50)", "VARCHAR(50)"),
         ("in_charge_name", "VARCHAR(255)", "VARCHAR(255)"),
         ("selected_in_charge", "VARCHAR(255)", "VARCHAR(255)"),
+        ("placed_by_id", "VARCHAR(36)", "VARCHAR(36)"),
+        ("placed_by_name", "VARCHAR(255)", "VARCHAR(255)"),
+        ("placed_by_email", "VARCHAR(255)", "VARCHAR(255)"),
     ]
 
     with engine.begin() as conn:
@@ -233,14 +237,19 @@ def migrate_production_dispatch_columns():
         ("remarks", "VARCHAR(2000)", "VARCHAR(2000)"),
         ("returned_wastage_qty", "FLOAT NOT NULL DEFAULT 0", "FLOAT NOT NULL DEFAULT 0"),
         ("remaining_concrete_disposition", "VARCHAR(50)", "VARCHAR(50)"),
+        ("pending_secondary_qty", "FLOAT NOT NULL DEFAULT 0", "FLOAT NOT NULL DEFAULT 0"),
+        ("pending_secondary_receipt_location", "VARCHAR(500)", "VARCHAR(500)"),
+        ("pending_secondary_receipt_structure_name", "VARCHAR(255)", "VARCHAR(255)"),
+        ("pending_secondary_receipt_structure_id", "VARCHAR(50)", "VARCHAR(50)"),
     ]
 
     with engine.begin() as conn:
         if engine.dialect.name == "mssql":
             for column_name, mssql_type, _ in columns:
+                null_suffix = "" if "NOT NULL" in mssql_type.upper() else " NULL"
                 conn.execute(text(f"""
                 IF COL_LENGTH('production_dispatch', '{column_name}') IS NULL
-                ALTER TABLE production_dispatch ADD {column_name} {mssql_type} NULL
+                ALTER TABLE production_dispatch ADD {column_name} {mssql_type}{null_suffix}
                 """))
         elif engine.dialect.name == "sqlite":
             existing_columns = {
@@ -324,6 +333,10 @@ def migrate_user_auth_columns():
                 IF COL_LENGTH('users', 'last_login_at') IS NULL
                 ALTER TABLE users ADD last_login_at DATETIME NULL
                 """,
+                """
+                IF COL_LENGTH('users', 'assigned_locations') IS NULL
+                ALTER TABLE users ADD assigned_locations VARCHAR(2000) NULL
+                """,
             ]
             for statement in statements:
                 conn.execute(text(statement))
@@ -335,6 +348,7 @@ def migrate_user_auth_columns():
                 ("password_hash", "VARCHAR(255)"),
                 ("is_email_verified", "BOOLEAN NOT NULL DEFAULT 1"),
                 ("last_login_at", "DATETIME"),
+                ("assigned_locations", "VARCHAR(2000)"),
             ]
             for column_name, sqlite_type in sqlite_columns:
                 if column_name not in existing_columns:
@@ -415,3 +429,20 @@ def migrate_auth_session_columns():
             CREATE INDEX IF NOT EXISTS IX_auth_sessions_user_id
             ON auth_sessions(user_id)
             """))
+
+def migrate_registration_invite_location_columns():
+    """Add location assignment support for approved registration emails."""
+    with engine.begin() as conn:
+        if engine.dialect.name == "mssql":
+            conn.execute(text("""
+            IF COL_LENGTH('registration_invites', 'assigned_locations') IS NULL
+            ALTER TABLE registration_invites ADD assigned_locations VARCHAR(2000) NULL
+            """))
+        elif engine.dialect.name == "sqlite":
+            existing_columns = {
+                row[1] for row in conn.execute(text("PRAGMA table_info(registration_invites)"))
+            }
+            if "assigned_locations" not in existing_columns:
+                conn.execute(text(
+                    "ALTER TABLE registration_invites ADD COLUMN assigned_locations VARCHAR(2000)"
+                ))

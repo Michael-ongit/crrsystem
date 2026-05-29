@@ -1,5 +1,5 @@
 // pages/ReconciliationDashboard.tsx - Analytics and KPI dashboard
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   LineChart,
   Line,
@@ -18,8 +18,9 @@ import { DashboardSummary } from '../types';
 import CollapsibleTableSection from '../components/CollapsibleTableSection';
 import StatusBadge from '../components/StatusBadge';
 
-const tableHeaderClass = 'px-4 py-2 text-left text-sm font-semibold text-[#003F72]';
-const numericTableHeaderClass = 'px-4 py-2 text-right text-sm font-semibold text-[#003F72]';
+const tableHeaderClass = 'px-4 py-2 text-left text-sm font-semibold text-[#134377]';
+const numericTableHeaderClass = 'px-4 py-2 text-right text-sm font-semibold text-[#134377]';
+type DashboardSortField = 'supply_id' | 'requested_qty' | 'actual_dispatched_qty' | 'wastage_qty' | 'wastage_percentage';
 
 /**
  * ReconciliationDashboard Component
@@ -30,10 +31,34 @@ const ReconciliationDashboard: React.FC = () => {
   const [dashboardData, setDashboardData] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState(30);
+  const [tableSearch, setTableSearch] = useState('');
+  const [tableSort, setTableSort] = useState<{ field: DashboardSortField; direction: 'asc' | 'desc' }>({
+    field: 'wastage_percentage',
+    direction: 'desc',
+  });
 
   useEffect(() => {
     fetchDashboard();
   }, [days]);
+
+  const wastageRecords = dashboardData?.wastage_records ?? [];
+  const sortedWastageRecords = useMemo(() => {
+    const search = tableSearch.trim().toLowerCase();
+    return [...wastageRecords]
+      .filter((record) =>
+        !search ||
+        record.supply_id.toLowerCase().includes(search) ||
+        record.tm_numbers.join(', ').toLowerCase().includes(search)
+      )
+      .sort((left, right) => {
+        const leftValue = left[tableSort.field];
+        const rightValue = right[tableSort.field];
+        const comparison = typeof leftValue === 'number' && typeof rightValue === 'number'
+          ? leftValue - rightValue
+          : String(leftValue).localeCompare(String(rightValue), undefined, { numeric: true });
+        return tableSort.direction === 'asc' ? comparison : -comparison;
+      });
+  }, [tableSearch, tableSort.direction, tableSort.field, wastageRecords]);
 
   const fetchDashboard = async () => {
     try {
@@ -50,7 +75,7 @@ const ReconciliationDashboard: React.FC = () => {
   if (loading) {
     return (
       <div className="flex justify-center items-center h-96">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#003F72]"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#134377]"></div>
       </div>
     );
   }
@@ -64,7 +89,7 @@ const ReconciliationDashboard: React.FC = () => {
   }
 
   // Prepare data for wastage chart
-  const wastageChartData = dashboardData.wastage_records.map((record) => ({
+  const wastageChartData = wastageRecords.map((record) => ({
     name: record.supply_id,
     wastage: record.wastage_percentage,
     limit: 1.0,
@@ -86,6 +111,8 @@ const ReconciliationDashboard: React.FC = () => {
     { name: 'Dispatched', value: dashboardData.dispatched_count },
     { name: 'Reconciled', value: dashboardData.reconciled_count },
   ];
+
+  const violationRecords = sortedWastageRecords.filter((record) => record.exceeds_ace_limit);
 
   return (
     <div className="space-y-6">
@@ -119,7 +146,7 @@ const ReconciliationDashboard: React.FC = () => {
       <div className="grid grid-cols-4 gap-4">
         <div className="rounded-lg bg-white p-6 shadow transition-shadow duration-200 ease-out hover:shadow-md">
           <div className="text-gray-600 text-sm font-semibold">Total Requisitions</div>
-          <div className="text-4xl font-bold text-[#003F72] mt-2">
+          <div className="text-4xl font-bold text-[#134377] mt-2">
             {dashboardData.total_requisitions}
           </div>
         </div>
@@ -209,8 +236,8 @@ const ReconciliationDashboard: React.FC = () => {
                 <Line
                   type="monotone"
                   dataKey="hours"
-                  stroke="#003F72"
-                  dot={{ fill: '#003F72' }}
+                  stroke="#134377"
+                  dot={{ fill: '#134377' }}
                   strokeWidth={2}
                   name="Turnaround (hrs)"
                 />
@@ -226,7 +253,7 @@ const ReconciliationDashboard: React.FC = () => {
 
       {/* Violations Table */}
       {dashboardData.violation_count > 0 && (
-        <CollapsibleTableSection title="ACE Limit Violations">
+        <CollapsibleTableSection title={`ACE Limit Violations (${violationRecords.length})`}>
             <table className="w-full">
               <thead className="bg-red-50 border-b">
                 <tr>
@@ -238,9 +265,7 @@ const ReconciliationDashboard: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {dashboardData.wastage_records
-                  .filter((r) => r.exceeds_ace_limit)
-                  .map((record) => (
+                {violationRecords.map((record) => (
                     <tr key={record.supply_id} className="border-b transition-colors duration-150 ease-out hover:bg-red-50">
                       <td className="px-4 py-3 font-mono text-sm">
                         {record.supply_id}
@@ -258,14 +283,49 @@ const ReconciliationDashboard: React.FC = () => {
                         {record.tm_numbers.join(', ')}
                       </td>
                     </tr>
-                  ))}
+                ))}
               </tbody>
             </table>
         </CollapsibleTableSection>
       )}
 
       {/* All Requisitions Table */}
-      <CollapsibleTableSection title={`All Requisitions (${dashboardData.wastage_records.length})`}>
+      <CollapsibleTableSection
+        title={`All Requisitions (${sortedWastageRecords.length})`}
+        actions={
+          <div className="flex flex-wrap items-end gap-2">
+            <input
+              value={tableSearch}
+              onChange={(event) => setTableSearch(event.target.value)}
+              placeholder="Search supply ID or vehicle"
+              className="h-9 rounded-md border border-white/30 bg-white px-3 text-sm text-gray-900"
+            />
+            <select
+              value={tableSort.field}
+              onChange={(event) =>
+                setTableSort((sort) => ({ ...sort, field: event.target.value as DashboardSortField }))
+              }
+              className="h-9 rounded-md border border-white/30 bg-white px-2 text-sm text-gray-900"
+            >
+              <option value="supply_id">Supply ID</option>
+              <option value="requested_qty">Requested</option>
+              <option value="actual_dispatched_qty">Dispatched</option>
+              <option value="wastage_qty">Wastage</option>
+              <option value="wastage_percentage">Wastage %</option>
+            </select>
+            <select
+              value={tableSort.direction}
+              onChange={(event) =>
+                setTableSort((sort) => ({ ...sort, direction: event.target.value as 'asc' | 'desc' }))
+              }
+              className="h-9 rounded-md border border-white/30 bg-white px-2 text-sm text-gray-900"
+            >
+              <option value="desc">Desc</option>
+              <option value="asc">Asc</option>
+            </select>
+          </div>
+        }
+      >
           <table className="w-full">
             <thead className="bg-gray-100 border-b">
               <tr>
@@ -278,7 +338,7 @@ const ReconciliationDashboard: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {dashboardData.wastage_records.map((record) => (
+              {sortedWastageRecords.map((record) => (
                 <tr
                   key={record.supply_id}
                   className={`border-b ${

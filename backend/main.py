@@ -120,6 +120,7 @@ async def create_user(
             password_hash=auth.hash_password(user.password),
             is_email_verified=True
         )
+        db_user.assigned_locations = user.assigned_locations
         
         db.add(db_user)
         db.commit()

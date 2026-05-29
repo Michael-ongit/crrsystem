@@ -16,6 +16,7 @@ import DispatchSummaryView from './pages/DispatchSummaryView';
 import ReconciliationDashboard from './pages/ReconciliationDashboard';
 import AuthPage from './pages/AuthPage';
 import AdminView from './pages/AdminView';
+import ProfileView from './pages/ProfileView';
 
 const routeForRole = (role: UserRole) => {
   if (role === UserRole.EXECUTION) return '/execution';
@@ -96,7 +97,7 @@ const App: React.FC = () => {
   if (checkingSession) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#003F72]"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#134377]"></div>
       </div>
     );
   }
@@ -125,8 +126,8 @@ const App: React.FC = () => {
             <Route path="/production" element={<ProductionView />} />
           )}
 
-          {[UserRole.PRODUCTION, UserRole.ADMIN].includes(authState.currentRole) && (
-            <Route path="/dispatch-summary" element={<DispatchSummaryView />} />
+          {[UserRole.EXECUTION, UserRole.ADMIN].includes(authState.currentRole) && (
+            <Route path="/dispatch-summary" element={<DispatchSummaryView currentUser={authState.user} />} />
           )}
 
           {authState.currentRole === UserRole.ADMIN && (
@@ -135,6 +136,7 @@ const App: React.FC = () => {
           {authState.currentRole === UserRole.ADMIN && (
             <Route path="/admin" element={<AdminView />} />
           )}
+          <Route path="/profile" element={<ProfileView currentUser={authState.user} />} />
           <Route path="/" element={<Navigate to={routeForRole(authState.currentRole)} replace />} />
           <Route path="*" element={<Navigate to={routeForRole(authState.currentRole)} replace />} />
         </Routes>

@@ -23,7 +23,7 @@ const CollapsibleTableSection: React.FC<CollapsibleTableSectionProps> = ({
 
   return (
     <section className={`overflow-hidden rounded-lg bg-white shadow-md transition-shadow duration-200 ease-out hover:shadow-lg ${className}`}>
-      <div className="flex items-center justify-between gap-3 bg-[#003F72] px-5 py-4 text-white">
+      <div className="flex items-center justify-between gap-3 bg-[#134377] px-5 py-4 text-white">
         <h2 className="min-w-0 truncate text-xl font-semibold">{title}</h2>
         <div className="flex shrink-0 items-center gap-3">
           {actions}
