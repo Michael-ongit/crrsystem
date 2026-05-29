@@ -167,8 +167,18 @@ export const adminAPI = {
   deleteDropdownOption: (optionId: string): Promise<{ message: string }> =>
     apiClient.delete(`/admin/dropdown-options/${optionId}`).then((res) => res.data),
 
-  getReferenceElements: (search?: string): Promise<RequisitionElementOption[]> =>
-    apiClient.get('/admin/reference-elements', { params: { search } }).then((res) => res.data),
+  getReferenceElements: (
+    search?: string,
+    filters?: {
+      location?: string;
+      structure_type?: string;
+      structure_name?: string;
+      structure_id?: string;
+      element_id?: string;
+    },
+    limit: number = 500
+  ): Promise<RequisitionElementOption[]> =>
+    apiClient.get('/admin/reference-elements', { params: { search, ...filters, limit } }).then((res) => res.data),
 
   createReferenceElement: (data: Omit<RequisitionElementOption, 'id'>): Promise<RequisitionElementOption> =>
     apiClient.post('/admin/reference-elements', data).then((res) => res.data),

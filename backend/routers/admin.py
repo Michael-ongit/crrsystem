@@ -326,7 +326,12 @@ def delete_dropdown_option(
 @router.get("/reference-elements", response_model=list[RequisitionElementResponse])
 def list_reference_elements(
     search: str | None = None,
-    limit: int = Query(200, le=500),
+    location: str | None = None,
+    structure_type: str | None = None,
+    structure_name: str | None = None,
+    structure_id: str | None = None,
+    element_id: str | None = None,
+    limit: int = Query(500, le=1000),
     db: Session = Depends(get_db),
     current_user: User = Depends(auth.require_roles(UserRole.ADMIN)),
 ):
@@ -342,6 +347,16 @@ def list_reference_elements(
                 RequisitionElement.element_id.ilike(pattern),
             )
         )
+    exact_filters = {
+        RequisitionElement.location: location,
+        RequisitionElement.structure_type: structure_type,
+        RequisitionElement.structure_name: structure_name,
+        RequisitionElement.structure_id: structure_id,
+        RequisitionElement.element_id: element_id,
+    }
+    for column, value in exact_filters.items():
+        if value:
+            query = query.filter(column == value)
     return query.order_by(RequisitionElement.location.asc(), RequisitionElement.structure_name.asc()).limit(limit).all()
 
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Select from 'react-select';
 import { adminAPI, hierarchyAPI } from '../api';
 import {
@@ -11,12 +11,21 @@ import {
 } from '../types';
 
 type AdminTab = 'overview' | 'access' | 'dropdowns' | 'reference';
-type DropdownCategory = 'concrete_grade' | 'placement_by';
+type DropdownCategory = 'concrete_grade' | 'placement_by' | 'vehicle_number' | 'difference_reason';
 type ReferenceSortField = 'location' | 'structure_type' | 'structure_name' | 'structure_id' | 'element_id';
+const emptyReferenceFilters: Record<ReferenceSortField, string> = {
+  location: '',
+  structure_type: '',
+  structure_name: '',
+  structure_id: '',
+  element_id: '',
+};
 
 const categoryLabels: Record<DropdownCategory, string> = {
   concrete_grade: 'Concrete Grade',
   placement_by: 'Placement By',
+  vehicle_number: 'Vehicle Number',
+  difference_reason: 'Reason for Difference',
 };
 
 const emptySummary: AdminSummary = {
@@ -92,16 +101,19 @@ const AdminView: React.FC = () => {
   const [accessSearch, setAccessSearch] = useState('');
   const [dropdownSearch, setDropdownSearch] = useState('');
   const [referenceSearch, setReferenceSearch] = useState('');
-  const [referenceFilters, setReferenceFilters] = useState<Record<ReferenceSortField, string>>({
-    location: '',
-    structure_type: '',
-    structure_name: '',
-    structure_id: '',
-    element_id: '',
-  });
+  const referenceSearchRef = useRef('');
+  const referenceFiltersRef = useRef<Record<ReferenceSortField, string>>(emptyReferenceFilters);
+  const [referenceFilters, setReferenceFilters] = useState<Record<ReferenceSortField, string>>(emptyReferenceFilters);
   const [referenceSort, setReferenceSort] = useState<{ field: ReferenceSortField; direction: 'asc' | 'desc' }>({
     field: 'location',
     direction: 'asc',
+  });
+  const [allReferenceFilterOptions, setAllReferenceFilterOptions] = useState<Record<ReferenceSortField, SelectOption[]>>({
+    location: [],
+    structure_type: [],
+    structure_name: [],
+    structure_id: [],
+    element_id: [],
   });
   const [dropdownCategory, setDropdownCategory] = useState<DropdownCategory>('concrete_grade');
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
@@ -110,6 +122,8 @@ const AdminView: React.FC = () => {
   const [editingReferenceId, setEditingReferenceId] = useState<number | null>(null);
   const [locationDrafts, setLocationDrafts] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
+  const [referenceLoading, setReferenceLoading] = useState(false);
+  const [referenceHasSearched, setReferenceHasSearched] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [locationOptions, setLocationOptions] = useState<SelectOption[]>([]);
@@ -138,21 +152,33 @@ const AdminView: React.FC = () => {
   const loadAdminData = async () => {
     setLoading(true);
     try {
-      const [summaryData, usersData, inviteData, dropdownData, referenceData, locations] = await Promise.all([
+      const [summaryData, usersData, inviteData, dropdownData, locations, referenceOptionData] = await Promise.all([
         adminAPI.getSummary(),
         adminAPI.getUsers(accessSearch),
         adminAPI.getRegistrationEmails(accessSearch),
         adminAPI.getDropdownOptions(dropdownCategory, dropdownSearch),
-        adminAPI.getReferenceElements(referenceSearch),
         hierarchyAPI.getLocations(),
+        Promise.all([
+          hierarchyAPI.getFilterOptions('location'),
+          hierarchyAPI.getFilterOptions('structure_type'),
+          hierarchyAPI.getFilterOptions('structure_name'),
+          hierarchyAPI.getFilterOptions('structure_id'),
+          hierarchyAPI.getFilterOptions('pile_lift_id'),
+        ]),
       ]);
       setSummary(summaryData);
       setUsers(usersData);
       setLocationDrafts(Object.fromEntries(usersData.map((user) => [user.id, formatLocationList(user.assigned_locations)])));
       setInvites(inviteData);
       setDropdowns(dropdownData);
-      setReferenceRows(referenceData);
       setLocationOptions(toOptions(locations));
+      setAllReferenceFilterOptions({
+        location: toOptions(referenceOptionData[0]),
+        structure_type: toOptions(referenceOptionData[1]),
+        structure_name: toOptions(referenceOptionData[2]),
+        structure_id: toOptions(referenceOptionData[3]),
+        element_id: toOptions(referenceOptionData[4]),
+      });
     } catch (error) {
       console.error('Failed to load admin data:', error);
       setMessage({ type: 'error', text: 'Failed to load admin data.' });
@@ -183,31 +209,12 @@ const AdminView: React.FC = () => {
     return () => window.clearTimeout(timeoutId);
   }, [dropdownCategory, dropdownSearch]);
 
-  useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      adminAPI.getReferenceElements(referenceSearch).then(setReferenceRows).catch(() => undefined);
-    }, 250);
-    return () => window.clearTimeout(timeoutId);
-  }, [referenceSearch]);
-
   const registeredEmailSet = useMemo(
     () => new Set(users.map((user) => user.email.toLowerCase())),
     [users]
   );
 
   const selectedLocationOptions = (value: string) => toOptions(parseLocationList(value));
-
-  const referenceFilterOptions = useMemo(() => {
-    const optionForField = (field: ReferenceSortField) =>
-      toOptions(referenceRows.map((row) => String(row[field] || '')));
-    return {
-      location: optionForField('location'),
-      structure_type: optionForField('structure_type'),
-      structure_name: optionForField('structure_name'),
-      structure_id: optionForField('structure_id'),
-      element_id: optionForField('element_id'),
-    };
-  }, [referenceRows]);
 
   const filteredReferenceRows = useMemo(() => {
     return [...referenceRows]
@@ -223,6 +230,31 @@ const AdminView: React.FC = () => {
         return referenceSort.direction === 'asc' ? comparison : -comparison;
       });
   }, [referenceFilters, referenceRows, referenceSort]);
+
+  const searchReferenceRows = async (options: { quiet?: boolean } = {}) => {
+    setReferenceLoading(true);
+    if (!options.quiet) setMessage(null);
+    try {
+      const activeSearch = referenceSearchRef.current;
+      const activeFilters = referenceFiltersRef.current;
+      const rows = await adminAPI.getReferenceElements(activeSearch, activeFilters);
+      setReferenceRows(rows);
+      setReferenceHasSearched(true);
+    } catch (error: any) {
+      setMessage({ type: 'error', text: getErrorMessage(error, 'Failed to search reference data.') });
+    } finally {
+      setReferenceLoading(false);
+    }
+  };
+
+  const clearReferenceSearch = () => {
+    referenceSearchRef.current = '';
+    referenceFiltersRef.current = emptyReferenceFilters;
+    setReferenceSearch('');
+    setReferenceFilters(emptyReferenceFilters);
+    setReferenceRows([]);
+    setReferenceHasSearched(false);
+  };
 
   const resetInviteForm = () => {
     setEditingInviteId(null);
@@ -376,6 +408,9 @@ const AdminView: React.FC = () => {
       }
       resetReferenceForm();
       await loadAdminData();
+      if (referenceHasSearched) {
+        await searchReferenceRows({ quiet: true });
+      }
     } catch (error: any) {
       setMessage({ type: 'error', text: getErrorMessage(error, 'Failed to save reference option.') });
     } finally {
@@ -425,6 +460,9 @@ const AdminView: React.FC = () => {
     try {
       await adminAPI.deleteReferenceElement(rowId);
       await loadAdminData();
+      if (referenceHasSearched) {
+        await searchReferenceRows({ quiet: true });
+      }
       setMessage({ type: 'success', text: 'Reference option removed.' });
     } catch (error: any) {
       setMessage({ type: 'error', text: getErrorMessage(error, 'Failed to remove reference option.') });
@@ -782,9 +820,35 @@ const AdminView: React.FC = () => {
             )}
           </div>
 
-          <input className={fieldClass} placeholder="Search location, structure, ID, or element" value={referenceSearch} onChange={(event) => setReferenceSearch(event.target.value)} />
-
           <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="mb-3 grid grid-cols-1 gap-3 lg:grid-cols-[1fr_120px_120px]">
+              <input
+                className={fieldClass}
+                placeholder="Search location, structure, ID, or element"
+                value={referenceSearch}
+                onChange={(event) => {
+                  referenceSearchRef.current = event.target.value;
+                  setReferenceSearch(event.target.value);
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => searchReferenceRows()}
+                disabled={referenceLoading}
+                className={primaryButtonClass}
+              >
+                {referenceLoading ? 'Searching' : 'Search'}
+              </button>
+              <button
+                type="button"
+                onClick={clearReferenceSearch}
+                disabled={referenceLoading}
+                className={secondaryButtonClass}
+              >
+                Clear
+              </button>
+            </div>
+
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-5">
               {([
                 ['location', 'Location'],
@@ -795,20 +859,22 @@ const AdminView: React.FC = () => {
               ] as Array<[ReferenceSortField, string]>).map(([field, label]) => (
                 <label key={field} className="block">
                   <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">{label}</span>
-                  <select
-                    className={fieldClass}
-                    value={referenceFilters[field]}
-                    onChange={(event) =>
-                      setReferenceFilters((filters) => ({ ...filters, [field]: event.target.value }))
-                    }
-                  >
-                    <option value="">All</option>
-                    {referenceFilterOptions[field].map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
+                  <Select
+                    classNames={selectClassNames}
+                    isClearable
+                    isSearchable
+                    placeholder="All"
+                    options={allReferenceFilterOptions[field]}
+                    value={allReferenceFilterOptions[field].find((option) => option.value === referenceFilters[field]) || null}
+                    onChange={(option) => {
+                      const nextFilters = {
+                        ...referenceFiltersRef.current,
+                        [field]: option?.value || '',
+                      };
+                      referenceFiltersRef.current = nextFilters;
+                      setReferenceFilters(nextFilters);
+                    }}
+                  />
                 </label>
               ))}
             </div>
@@ -844,7 +910,9 @@ const AdminView: React.FC = () => {
                 </select>
               </label>
               <div className="flex items-end text-sm font-semibold text-gray-600">
-                {filteredReferenceRows.length} of {referenceRows.length}
+                {referenceHasSearched
+                  ? `${filteredReferenceRows.length} result${filteredReferenceRows.length === 1 ? '' : 's'}`
+                  : 'Choose filters, then search'}
               </div>
             </div>
           </div>
@@ -877,6 +945,20 @@ const AdminView: React.FC = () => {
                     </td>
                   </tr>
                 ))}
+                {referenceHasSearched && filteredReferenceRows.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-500">
+                      No reference rows match the selected search.
+                    </td>
+                  </tr>
+                )}
+                {!referenceHasSearched && (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-500">
+                      Select one or more filters, then click Search to load matching site references.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>

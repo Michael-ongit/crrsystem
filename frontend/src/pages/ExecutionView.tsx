@@ -175,6 +175,7 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
   const [locationOptions, setLocationOptions] = useState<SelectOption[]>([]);
   const [gradeOptions, setGradeOptions] = useState<SelectOption[]>([]);
   const [placementOptions, setPlacementOptions] = useState<SelectOption[]>([]);
+  const [differenceReasonOptions, setDifferenceReasonOptions] = useState<SelectOption[]>([]);
   const [structureTypeOptions, setStructureTypeOptions] = useState<SelectOption[]>([]);
   const [structureNameOptions, setStructureNameOptions] = useState<SelectOption[]>([]);
   const [structureIdOptions, setStructureIdOptions] = useState<SelectOption[]>([]);
@@ -268,14 +269,16 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
   useEffect(() => {
     const fetchInitialData = async () => {
       try {
-        const [locations, grades, placements] = await Promise.all([
+        const [locations, grades, placements, differenceReasons] = await Promise.all([
           hierarchyAPI.getLocations(),
           hierarchyAPI.getDropdownOptions('concrete_grade'),
           hierarchyAPI.getDropdownOptions('placement_by'),
+          hierarchyAPI.getDropdownOptions('difference_reason'),
         ]);
         setLocationOptions(toOptions(locations));
         setGradeOptions(toOptions(grades));
         setPlacementOptions(toOptions(placements));
+        setDifferenceReasonOptions(toOptions(differenceReasons));
         loadDrafts();
         await fetchOrders();
       } catch (error) {
@@ -893,7 +896,20 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
 
               <Section title="Order Details">
                 <Field label="Reason for Difference">
-                  <input className={fieldClass} {...register('difference_reason')} />
+                  <Controller
+                    name="difference_reason"
+                    control={control}
+                    render={({ field }) => (
+                      <Select
+                        classNames={selectClassNames}
+                        isClearable
+                        isSearchable
+                        options={differenceReasonOptions}
+                        value={optionFor(differenceReasonOptions, field.value)}
+                        onChange={(option) => field.onChange(option?.value || '')}
+                      />
+                    )}
+                  />
                 </Field>
 
                 <Field label="Order Quantity (cum)" required error={errors.requested_qty?.message}>

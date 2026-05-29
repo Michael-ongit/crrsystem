@@ -152,6 +152,7 @@ const DispatchSummaryView: React.FC<DispatchSummaryViewProps> = ({ currentUser }
   const [secondaryStructureTypeOptions, setSecondaryStructureTypeOptions] = useState<SelectOption[]>([]);
   const [secondaryStructureNameOptions, setSecondaryStructureNameOptions] = useState<SelectOption[]>([]);
   const [secondaryStructureIdOptions, setSecondaryStructureIdOptions] = useState<string[]>([]);
+  const [vehicleFilter, setVehicleFilter] = useState('');
 
   const readDrafts = (): Record<string, ReconciliationFormData> => {
     const rawDrafts = localStorage.getItem(draftStorageKey);
@@ -528,8 +529,8 @@ const DispatchSummaryView: React.FC<DispatchSummaryViewProps> = ({ currentUser }
           pendingQty,
         };
       })
-    ),
-    [filteredOrders]
+    ).filter((row) => !vehicleFilter || row.dispatch.tm_number === vehicleFilter),
+    [filteredOrders, vehicleFilter]
   );
 
   const filteredHistory = useMemo(() => filterRequisitions(history, filters), [filters, history]);
@@ -564,7 +565,22 @@ const DispatchSummaryView: React.FC<DispatchSummaryViewProps> = ({ currentUser }
         </div>
       )}
 
-      <CollapsibleTableSection title={`Dispatched Orders (${filteredAckRows.length})`}>
+      <CollapsibleTableSection
+        title={`Dispatched Orders (${filteredAckRows.length})`}
+        actions={
+          <div className="min-w-[220px] text-gray-900">
+            <Select
+              classNames={selectClassNames}
+              isClearable
+              isSearchable
+              placeholder="Vehicle number"
+              options={toOptions(allDispatches.map((dispatch) => dispatch.tm_number))}
+              value={optionFor(toOptions(allDispatches.map((dispatch) => dispatch.tm_number)), vehicleFilter)}
+              onChange={(option) => setVehicleFilter(option?.value || '')}
+            />
+          </div>
+        }
+      >
         <table className="w-full min-w-[1060px]">
           <thead className="bg-gray-100">
             <tr>

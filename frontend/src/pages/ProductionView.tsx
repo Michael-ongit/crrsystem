@@ -1,7 +1,8 @@
 // pages/ProductionView.tsx - Production team dispatch logging
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useForm } from 'react-hook-form';
-import { productionAPI, requisitionAPI, userAPI } from '../api';
+import { Controller, useForm } from 'react-hook-form';
+import Select from 'react-select';
+import { hierarchyAPI, productionAPI, requisitionAPI, userAPI } from '../api';
 import CollapsibleTableSection from '../components/CollapsibleTableSection';
 import PastRequisitionsModalButton from '../components/PastRequisitionsModalButton';
 import PastRequisitionsTable from '../components/PastRequisitionsTable';
@@ -69,6 +70,28 @@ const tableHeaderClass = 'px-4 py-3 text-left text-xs font-bold uppercase text-[
 const numericTableHeaderClass = 'px-4 py-3 text-right text-xs font-bold uppercase text-[#134377]';
 const tableActionButtonClass =
   'rounded bg-[#134377] px-3 py-1 text-sm font-semibold text-white shadow-sm transition-all duration-200 ease-out hover:bg-[#134377] hover:shadow';
+type SelectOption = { value: string; label: string };
+const toOptions = (values: string[]): SelectOption[] =>
+  Array.from(new Set(values.filter(Boolean)))
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    .map((value) => ({ value, label: value }));
+const optionFor = (options: SelectOption[], value?: string) =>
+  options.find((option) => option.value === value) || (value ? { value, label: value } : null);
+const selectClassNames = {
+  control: (state: any) =>
+    `min-h-[38px] rounded-md border bg-white text-sm shadow-sm ${
+      state.isFocused ? 'border-[#134377] ring-2 ring-[#134377]/15' : 'border-gray-300'
+    }`,
+  valueContainer: () => 'px-2',
+  input: () => 'text-sm text-gray-900',
+  placeholder: () => 'text-sm text-gray-400',
+  singleValue: () => 'text-sm text-gray-900',
+  menu: () => 'z-50 rounded-md border border-gray-200 bg-white text-sm shadow-lg',
+  option: (state: any) =>
+    `cursor-pointer px-3 py-2 ${
+      state.isSelected ? 'bg-[#134377] text-white' : state.isFocused ? 'bg-[#134377]/10 text-gray-900' : 'text-gray-900'
+    }`,
+};
 
 const today = () => toDateInputIST();
 
@@ -92,6 +115,7 @@ const ProductionView: React.FC = () => {
   const [selectedReturnDispatchId, setSelectedReturnDispatchId] = useState<string | null>(null);
   const [viewingOrder, setViewingOrder] = useState<ConcreteRequisition | null>(null);
   const [userNames, setUserNames] = useState<Record<string, string>>({});
+  const [vehicleNumberOptions, setVehicleNumberOptions] = useState<SelectOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [dispatching, setDispatching] = useState(false);
   const [finalizingDispatch, setFinalizingDispatch] = useState(false);
@@ -106,6 +130,7 @@ const ProductionView: React.FC = () => {
   const {
     register,
     handleSubmit,
+    control,
     watch,
     getValues,
     formState: { errors },
@@ -156,11 +181,12 @@ const ProductionView: React.FC = () => {
   const fetchValidatedRequisitions = async () => {
     try {
       setLoading(true);
-      const [validatedReqs, allReqs, users, dispatches] = await Promise.all([
+      const [validatedReqs, allReqs, users, dispatches, vehicleNumbers] = await Promise.all([
         requisitionAPI.getRequisitions(RequisitionStatus.VALIDATED),
         requisitionAPI.getRequisitions(),
         userAPI.getUsers(),
         productionAPI.getAllDispatches(0, 200),
+        hierarchyAPI.getDropdownOptions('vehicle_number'),
       ]);
       const requisitionsBySupplyId = new Map(allReqs.map((req) => [req.supply_id, req]));
       const totals = dispatches.reduce<Record<string, number>>((acc, dispatch) => {
@@ -207,6 +233,7 @@ const ProductionView: React.FC = () => {
       setPastRequisitions(allReqs.filter((req) => req.status === RequisitionStatus.RECONCILED));
       setDispatchTotals(totals);
       setUserNames(Object.fromEntries(users.map((user) => [user.id, user.name])));
+      setVehicleNumberOptions(toOptions(vehicleNumbers));
     } catch (error) {
       console.error('Failed to fetch requisitions:', error);
       setMessage({
@@ -597,7 +624,7 @@ const ProductionView: React.FC = () => {
 
       setMessage({
         type: 'success',
-        text: `${dispatchVehicles.length} vehicle${dispatchVehicles.length === 1 ? '' : 's'} submitted for dispatch.`,
+        text: `${stagedVehicles.length} vehicle${stagedVehicles.length === 1 ? '' : 's'} submitted for dispatch.`,
       });
       setSelectedRequisition(null);
       setDispatchVehicles([]);
@@ -919,9 +946,19 @@ const ProductionView: React.FC = () => {
                       <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-600">
                         Vehicle Number
                       </label>
-                      <input
-                        className={fieldClass}
-                        {...register('tm_number', { required: 'Vehicle number is required' })}
+                      <Controller
+                        name="tm_number"
+                        control={control}
+                        rules={{ required: 'Vehicle number is required' }}
+                        render={({ field }) => (
+                          <Select
+                            classNames={selectClassNames}
+                            isSearchable
+                            options={vehicleNumberOptions}
+                            value={optionFor(vehicleNumberOptions, field.value)}
+                            onChange={(option) => field.onChange(option?.value || '')}
+                          />
+                        )}
                       />
                       {errors.tm_number && (
                         <p className="mt-1 text-xs text-red-600">{errors.tm_number.message}</p>

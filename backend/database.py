@@ -132,6 +132,8 @@ def seed_dropdown_options_if_empty():
         defaults = {
             "concrete_grade": ["M-10", "M-20", "M-25", "M-30", "M-45", "M-45P", "M-50", "M-55", "M-60"],
             "placement_by": ["Boom Placer", "Direct - Chute"],
+            "vehicle_number": ["TM-001", "TM-002", "TM-003"],
+            "difference_reason": ["Site measurement variation", "Drawing revision", "Pour sequence adjustment"],
         }
 
         with SessionLocal() as db:
