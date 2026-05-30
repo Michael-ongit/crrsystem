@@ -341,7 +341,15 @@ cd "c:\Michael\L_T internship\concrete_recon\backend"
 cd "c:\Michael\L_T internship\concrete_recon\frontend"
 npm run build
 ```
+## My inputs
+### Running Backend
+cd backend
+.\venv\scripts\activate
+python -m uvicorn main:app --reload --host 0.0.0.0 --port 8020
 
+### Running Frontend
+cd frontend
+npm run dev -- --host 0.0.0.0
 ---
 
 ## 📚 API Documentation

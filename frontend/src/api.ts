@@ -18,7 +18,7 @@ import {
   RequisitionElementOption,
 } from './types';
 
-const defaultApiBaseURL = 'http://127.0.0.1:8020';
+const defaultApiBaseURL = '/api'; // Default base URL for API requests, can be overridden by environment variable
 
 // Initialize Axios instance
 const apiClient: AxiosInstance = axios.create({
@@ -197,7 +197,7 @@ export const adminAPI = {
 
 export const requisitionAPI = {
   createRequisition: (data: ConcreteRequisitionCreate): Promise<ConcreteRequisition> =>
-    apiClient.post('/requisitions', data).then((res) => res.data),
+    apiClient.post('/requisitions/', data).then((res) => res.data),
 
   resubmitRequisition: (supplyId: string, data: ConcreteRequisitionCreate): Promise<ConcreteRequisition> =>
     apiClient.put(`/requisitions/${supplyId}/resubmit`, data).then((res) => res.data),
@@ -213,7 +213,7 @@ export const requisitionAPI = {
 
   getRequisitions: (statusFilter?: string, locationScope?: 'assigned'): Promise<ConcreteRequisition[]> =>
     apiClient
-      .get('/requisitions', { params: { status_filter: statusFilter, location_scope: locationScope } })
+      .get('/requisitions/', { params: { status_filter: statusFilter, location_scope: locationScope } })
       .then((res) => res.data),
 
   getRequisitionById: (supplyId: string): Promise<ConcreteRequisition> =>
@@ -310,7 +310,7 @@ export const productionAPI = {
 
   getAllDispatches: (skip: number = 0, limit: number = 100): Promise<ProductionDispatch[]> =>
     apiClient
-      .get('/production', { params: { skip, limit } })
+      .get('/production/', { params: { skip, limit } })
       .then((res) => res.data),
 
   updateDeliveryTime: (dispatchId: string, deliveryTime: string): Promise<ProductionDispatch> =>
