@@ -12,6 +12,9 @@ const roleDescriptions: Record<UserRole, string> = {
   [UserRole.PLANNING]: 'Reviews requisitions, records planning decisions, and tracks approved concrete flow.',
   [UserRole.PRODUCTION]: 'Dispatches vehicles, manages plant returns, and records production-side movement.',
   [UserRole.ADMIN]: 'Manages users, reference data, dashboard analytics, and all requisitions.',
+  [UserRole.PLANNING_MANAGER]: 'Accesses every operational area, dashboard analytics, and administration.',
+  [UserRole.PROJECT_MANAGER]: 'Reviews dashboard analytics only.',
+  [UserRole.HQ_PROJECT_COORDINATOR]: 'Coordinates operational pages and dashboard analytics without administration.',
 };
 
 const roleCapabilities: Record<UserRole, string[]> = {
@@ -19,6 +22,9 @@ const roleCapabilities: Record<UserRole, string[]> = {
   [UserRole.PLANNING]: ['Approve or send back requisitions', 'Review current and past requisitions', 'Receive planning notifications'],
   [UserRole.PRODUCTION]: ['Dispatch concrete vehicles', 'Record return to plant', 'Receive production notifications'],
   [UserRole.ADMIN]: ['Manage users and invites', 'Maintain site reference data', 'View all locations and dashboard analytics'],
+  [UserRole.PLANNING_MANAGER]: ['Access all pages', 'Manage users and reference data', 'View dashboard analytics'],
+  [UserRole.PROJECT_MANAGER]: ['View dashboard analytics'],
+  [UserRole.HQ_PROJECT_COORDINATOR]: ['Create and track requisitions', 'Review planning and production pages', 'View dashboard analytics'],
 };
 
 const ProfileView: React.FC<ProfileViewProps> = ({ currentUser }) => {
@@ -65,7 +71,7 @@ const ProfileView: React.FC<ProfileViewProps> = ({ currentUser }) => {
   const assignedLocations = user.assigned_locations || [];
   const locationSummary = assignedLocations.length
     ? `${assignedLocations.length} assigned location${assignedLocations.length === 1 ? '' : 's'}`
-    : user.role === UserRole.ADMIN
+    : [UserRole.ADMIN, UserRole.PLANNING_MANAGER, UserRole.HQ_PROJECT_COORDINATOR].includes(user.role)
       ? 'All locations'
       : 'No assigned locations';
 
@@ -177,7 +183,9 @@ const ProfileView: React.FC<ProfileViewProps> = ({ currentUser }) => {
             ))
           ) : (
             <span className="text-sm text-gray-500">
-              {user.role === UserRole.ADMIN ? 'Admin users can access every location.' : 'No locations are currently assigned.'}
+              {[UserRole.ADMIN, UserRole.PLANNING_MANAGER, UserRole.HQ_PROJECT_COORDINATOR].includes(user.role)
+                ? 'This role can access every location.'
+                : 'No locations are currently assigned.'}
             </span>
           )}
         </div>

@@ -19,11 +19,18 @@ import AdminView from './pages/AdminView';
 import ProfileView from './pages/ProfileView';
 
 const routeForRole = (role: UserRole) => {
+  if (role === UserRole.PROJECT_MANAGER) return '/dashboard';
+  if (role === UserRole.PLANNING_MANAGER) return '/admin';
+  if (role === UserRole.HQ_PROJECT_COORDINATOR) return '/execution';
   if (role === UserRole.EXECUTION) return '/execution';
   if (role === UserRole.PLANNING) return '/planning';
   if (role === UserRole.PRODUCTION) return '/production';
   return '/admin';
 };
+
+const fullAccessRoles = [UserRole.ADMIN, UserRole.PLANNING_MANAGER];
+const operationalAccessRoles = [...fullAccessRoles, UserRole.HQ_PROJECT_COORDINATOR];
+const dashboardRoles = [...operationalAccessRoles, UserRole.PROJECT_MANAGER];
 
 const resetAuthState = (): AuthState => ({
   user: null,
@@ -114,26 +121,26 @@ const App: React.FC = () => {
         onLogout={handleLogout}
       >
         <Routes>
-          {[UserRole.EXECUTION, UserRole.ADMIN].includes(authState.currentRole) && (
+          {[UserRole.EXECUTION, ...operationalAccessRoles].includes(authState.currentRole) && (
             <Route path="/execution" element={<ExecutionView currentUser={authState.user} />} />
           )}
 
-          {[UserRole.PLANNING, UserRole.ADMIN].includes(authState.currentRole) && (
+          {[UserRole.PLANNING, ...operationalAccessRoles].includes(authState.currentRole) && (
             <Route path="/planning" element={<PlanningView currentUser={authState.user} />} />
           )}
 
-          {[UserRole.PRODUCTION, UserRole.ADMIN].includes(authState.currentRole) && (
+          {[UserRole.PRODUCTION, ...operationalAccessRoles].includes(authState.currentRole) && (
             <Route path="/production" element={<ProductionView />} />
           )}
 
-          {[UserRole.EXECUTION, UserRole.ADMIN].includes(authState.currentRole) && (
+          {[UserRole.EXECUTION, ...operationalAccessRoles].includes(authState.currentRole) && (
             <Route path="/dispatch-summary" element={<DispatchSummaryView currentUser={authState.user} />} />
           )}
 
-          {authState.currentRole === UserRole.ADMIN && (
+          {dashboardRoles.includes(authState.currentRole) && (
             <Route path="/dashboard" element={<ReconciliationDashboard />} />
           )}
-          {authState.currentRole === UserRole.ADMIN && (
+          {fullAccessRoles.includes(authState.currentRole) && (
             <Route path="/admin" element={<AdminView />} />
           )}
           <Route path="/profile" element={<ProfileView currentUser={authState.user} />} />

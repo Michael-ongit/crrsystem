@@ -23,6 +23,7 @@ import {
   combineISTDateTimeForApi,
   formatDateTimeIST,
   parseApiDateTime,
+  TIME_INPUT_STEP_SECONDS,
   toDateInputIST,
   toTimeInputIST,
 } from '../timeUtils';
@@ -265,13 +266,13 @@ const DispatchSummaryView: React.FC<DispatchSummaryViewProps> = ({ currentUser }
         dispatch.receipt_at_site_time ? toDateInputIST(dispatch.receipt_at_site_time) : today()
       ),
       receipt_at_site_time: draft?.receipt_at_site_time ?? (
-        dispatch.receipt_at_site_time ? toTimeInputIST(dispatch.receipt_at_site_time) : ''
+        dispatch.receipt_at_site_time ? toTimeInputIST(dispatch.receipt_at_site_time) : toTimeInputIST()
       ),
       release_from_site_date: draft?.release_from_site_date ?? (
         dispatch.release_from_site_time ? toDateInputIST(dispatch.release_from_site_time) : today()
       ),
       release_from_site_time: draft?.release_from_site_time ?? (
-        dispatch.release_from_site_time ? toTimeInputIST(dispatch.release_from_site_time) : ''
+        dispatch.release_from_site_time ? toTimeInputIST(dispatch.release_from_site_time) : toTimeInputIST()
       ),
       remarks: draft?.remarks ?? dispatch.remarks ?? '',
     });
@@ -1112,6 +1113,7 @@ const DispatchSummaryView: React.FC<DispatchSummaryViewProps> = ({ currentUser }
                             />
                             <input
                               type="time"
+                              step={TIME_INPUT_STEP_SECONDS}
                               className={fieldClass}
                               {...register('receipt_at_site_time', { required: 'Receipt time is required' })}
                             />
@@ -1135,6 +1137,7 @@ const DispatchSummaryView: React.FC<DispatchSummaryViewProps> = ({ currentUser }
                             />
                             <input
                               type="time"
+                              step={TIME_INPUT_STEP_SECONDS}
                               className={fieldClass}
                               {...register('release_from_site_time', { required: 'Release time is required' })}
                             />

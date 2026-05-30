@@ -19,7 +19,9 @@ import {
   formatDateTimeIST,
   nowLocalIso,
   parseApiDateTime,
+  TIME_INPUT_STEP_SECONDS,
   toDateInputIST,
+  toTimeInputIST,
 } from '../timeUtils';
 import { ConcreteRequisition, RequisitionStatus, User } from '../types';
 
@@ -82,7 +84,7 @@ const defaultValues = (currentUser?: User | null): ExecutionFormData => ({
   qty_difference: undefined,
   difference_reason: '',
   requested_qty: undefined,
-  pour_time: '',
+  pour_time: toTimeInputIST(),
   placement_by: '',
   in_charge_id: currentUser?.id || '',
   in_charge_name: currentUser?.name || '',
@@ -928,7 +930,7 @@ const ExecutionView: React.FC<ExecutionViewProps> = ({ currentUser }) => {
                 </Field>
 
                 <Field label="Time of Pour">
-                  <input type="time" className={fieldClass} {...register('pour_time')} />
+                  <input type="time" step={TIME_INPUT_STEP_SECONDS} className={fieldClass} {...register('pour_time')} />
                 </Field>
 
                 <Field label="Placement By">

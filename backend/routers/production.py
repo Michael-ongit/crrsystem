@@ -118,7 +118,7 @@ def _execution_can_access_location(user: User, requisition: ConcreteRequisition 
 
 
 def _require_dispatch_location_access(user: User, requisition: ConcreteRequisition | None) -> None:
-    if user.role == UserRole.ADMIN:
+    if user.role in auth.OPERATIONAL_ACCESS_ROLES:
         return
     if not _execution_can_access_location(user, requisition):
         raise HTTPException(
@@ -161,7 +161,7 @@ def _update_requisition_workflow_status(
 def create_dispatch(
     dispatch: ProductionDispatchCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.PRODUCTION, UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(UserRole.PRODUCTION, *auth.OPERATIONAL_ACCESS_ROLES)),
 ):
     """
     Create a production dispatch record.
@@ -363,7 +363,7 @@ def update_delivery_time(
     dispatch_id: str,
     delivery_update: DeliveryTimeUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.PRODUCTION, UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(UserRole.PRODUCTION, *auth.OPERATIONAL_ACCESS_ROLES)),
 ):
     """
     Update the delivery time for a dispatch record.
@@ -417,7 +417,7 @@ def acknowledge_dispatch(
     dispatch_id: str,
     acknowledgement: DispatchAcknowledgementUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.EXECUTION, UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(UserRole.EXECUTION, *auth.OPERATIONAL_ACCESS_ROLES)),
 ):
     """Record site acknowledgement while keeping the requisition in dispatched state."""
     try:
@@ -607,7 +607,7 @@ def update_return_to_plant(
     dispatch_id: str,
     return_update: ReturnToPlantUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.PRODUCTION, UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(UserRole.PRODUCTION, *auth.OPERATIONAL_ACCESS_ROLES)),
 ):
     """Close the dispatch after site acknowledgement has been captured."""
     try:
@@ -672,7 +672,7 @@ def reconcile_dispatch(
     dispatch_id: str,
     reconciliation: DispatchReconciliationUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.PRODUCTION, UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(UserRole.PRODUCTION, *auth.OPERATIONAL_ACCESS_ROLES)),
 ):
     """Mark a dispatch as reconciled and update its parent requisition status."""
     try:
@@ -729,3 +729,4 @@ def reconcile_dispatch(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to reconcile dispatch"
         )
+

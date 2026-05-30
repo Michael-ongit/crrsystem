@@ -46,7 +46,7 @@ def _site_deposited_qty(dispatches: list[ProductionDispatch]) -> float:
 def get_dashboard_summary(
     days: int = Query(30, description="Number of days to analyze"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(*auth.DASHBOARD_ACCESS_ROLES)),
 ):
     """
     Get comprehensive dashboard summary.
@@ -183,7 +183,7 @@ def get_wastage_records(
     days: int = Query(30, description="Number of days to analyze"),
     exceeds_limit_only: bool = Query(False, description="Only show violations"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(*auth.DASHBOARD_ACCESS_ROLES)),
 ):
     """
     Get wastage records with optional filtering.
@@ -253,7 +253,7 @@ def get_wastage_records(
 def get_turnaround_times(
     days: int = Query(30, description="Number of days to analyze"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(*auth.DASHBOARD_ACCESS_ROLES)),
 ):
     """
     Get TM turnaround time records for performance analysis.
@@ -298,3 +298,4 @@ def get_turnaround_times(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch turnaround times"
         )
+

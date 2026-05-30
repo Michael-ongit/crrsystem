@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 @router.get("/summary", summary="Usage-focused admin summary")
 def get_admin_summary(
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(*auth.FULL_ACCESS_ROLES)),
 ):
     dispatches = db.query(ProductionDispatch).all()
     pending_acknowledgement = sum(
@@ -78,7 +78,7 @@ def get_admin_summary(
 def list_registration_invites(
     search: str | None = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(*auth.FULL_ACCESS_ROLES)),
 ):
     query = db.query(RegistrationInvite)
     if search:
@@ -100,7 +100,7 @@ def list_registration_invites(
 def create_registration_invite(
     payload: RegistrationInviteCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(*auth.FULL_ACCESS_ROLES)),
 ):
     existing = db.query(RegistrationInvite).filter(RegistrationInvite.email == payload.email).first()
     if existing:
@@ -124,7 +124,7 @@ def update_registration_invite(
     invite_id: str,
     payload: RegistrationInviteUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(*auth.FULL_ACCESS_ROLES)),
 ):
     invite = db.query(RegistrationInvite).filter(RegistrationInvite.invite_id == invite_id).first()
     if not invite:
@@ -157,7 +157,7 @@ def update_registration_invite(
 def delete_registration_invite(
     invite_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(*auth.FULL_ACCESS_ROLES)),
 ):
     invite = db.query(RegistrationInvite).filter(RegistrationInvite.invite_id == invite_id).first()
     if not invite:
@@ -171,7 +171,7 @@ def delete_registration_invite(
 def admin_list_users(
     search: str | None = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(*auth.FULL_ACCESS_ROLES)),
 ):
     query = db.query(User)
     if search:
@@ -185,7 +185,7 @@ def admin_update_user(
     user_id: str,
     payload: UserUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(*auth.FULL_ACCESS_ROLES)),
 ):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -216,7 +216,7 @@ def admin_update_user(
 def admin_delete_user(
     user_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(*auth.FULL_ACCESS_ROLES)),
 ):
     if user_id == current_user.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You cannot delete your own admin account")
@@ -243,7 +243,7 @@ def list_dropdown_options(
     search: str | None = None,
     active_only: bool = False,
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(*auth.FULL_ACCESS_ROLES)),
 ):
     query = db.query(DropdownOption)
     if category:
@@ -260,7 +260,7 @@ def list_dropdown_options(
 def create_dropdown_option(
     payload: DropdownOptionCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(*auth.FULL_ACCESS_ROLES)),
 ):
     existing = (
         db.query(DropdownOption)
@@ -288,7 +288,7 @@ def update_dropdown_option(
     option_id: str,
     payload: DropdownOptionUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(*auth.FULL_ACCESS_ROLES)),
 ):
     option = db.query(DropdownOption).filter(DropdownOption.option_id == option_id).first()
     if not option:
@@ -313,7 +313,7 @@ def update_dropdown_option(
 def delete_dropdown_option(
     option_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(*auth.FULL_ACCESS_ROLES)),
 ):
     option = db.query(DropdownOption).filter(DropdownOption.option_id == option_id).first()
     if not option:
@@ -333,7 +333,7 @@ def list_reference_elements(
     element_id: str | None = None,
     limit: int = Query(500, le=1000),
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(*auth.FULL_ACCESS_ROLES)),
 ):
     query = db.query(RequisitionElement)
     if search:
@@ -364,7 +364,7 @@ def list_reference_elements(
 def create_reference_element(
     payload: RequisitionElementCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(*auth.FULL_ACCESS_ROLES)),
 ):
     element = RequisitionElement(**payload.model_dump())
     db.add(element)
@@ -378,7 +378,7 @@ def update_reference_element(
     element_id: int,
     payload: RequisitionElementUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(*auth.FULL_ACCESS_ROLES)),
 ):
     element = db.query(RequisitionElement).filter(RequisitionElement.id == element_id).first()
     if not element:
@@ -395,7 +395,7 @@ def update_reference_element(
 def delete_reference_element(
     element_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(*auth.FULL_ACCESS_ROLES)),
 ):
     element = db.query(RequisitionElement).filter(RequisitionElement.id == element_id).first()
     if not element:
@@ -403,3 +403,4 @@ def delete_reference_element(
     db.delete(element)
     db.commit()
     return {"message": "Reference option removed"}
+

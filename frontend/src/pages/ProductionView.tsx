@@ -19,6 +19,7 @@ import {
   dateTimeLocalInputToApi,
   formatDateTimeIST,
   parseApiDateTime,
+  TIME_INPUT_STEP_SECONDS,
   toDateInputIST,
   toDateTimeLocalInputIST,
   toTimeInputIST,
@@ -153,7 +154,7 @@ const ProductionView: React.FC = () => {
   } = useForm<ReturnToPlantFormData>({
     defaultValues: {
       return_to_plant_date: today(),
-      return_to_plant_time: '',
+      return_to_plant_time: toTimeInputIST(),
       remarks: '',
     },
   });
@@ -524,7 +525,7 @@ const ProductionView: React.FC = () => {
     setMessage(null);
     resetReturnForm(savedDraft || {
       return_to_plant_date: today(),
-      return_to_plant_time: '',
+      return_to_plant_time: toTimeInputIST(),
       remarks: firstDispatch.remarks || '',
     });
   };
@@ -539,7 +540,7 @@ const ProductionView: React.FC = () => {
         : today(),
       return_to_plant_time: dispatch.return_to_plant_time
         ? toTimeInputIST(dispatch.return_to_plant_time)
-        : '',
+        : toTimeInputIST(),
       remarks: dispatch.remarks || '',
     });
   };
@@ -991,6 +992,7 @@ const ProductionView: React.FC = () => {
                       </label>
                       <input
                         type="datetime-local"
+                        step={TIME_INPUT_STEP_SECONDS}
                         className={fieldClass}
                         {...register('dispatch_time', { required: 'Dispatch time is required' })}
                       />
@@ -1145,6 +1147,7 @@ const ProductionView: React.FC = () => {
                         />
                         <input
                           type="time"
+                          step={TIME_INPUT_STEP_SECONDS}
                           className={fieldClass}
                           {...registerReturn('return_to_plant_time', { required: 'Return time is required' })}
                         />

@@ -94,7 +94,7 @@ async def health_check():
 async def create_user(
     user: UserCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.ADMIN))
+    current_user: User = Depends(auth.require_roles(*auth.FULL_ACCESS_ROLES))
 ):
     """
     Create a new user.
@@ -259,3 +259,4 @@ if __name__ == "__main__":
         port=8020,
         log_level="info"
     )
+

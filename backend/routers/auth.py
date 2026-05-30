@@ -102,6 +102,11 @@ def require_roles(*roles: UserRole):
     return role_checker
 
 
+FULL_ACCESS_ROLES = (UserRole.ADMIN, UserRole.PLANNING_MANAGER)
+OPERATIONAL_ACCESS_ROLES = (*FULL_ACCESS_ROLES, UserRole.HQ_PROJECT_COORDINATOR)
+DASHBOARD_ACCESS_ROLES = (*OPERATIONAL_ACCESS_ROLES, UserRole.PROJECT_MANAGER)
+
+
 @router.post(
     "/register",
     response_model=RegisterResponse,

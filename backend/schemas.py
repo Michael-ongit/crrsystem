@@ -11,6 +11,9 @@ class UserRole(str, Enum):
     PLANNING = "Planning"
     PRODUCTION = "Production"
     ADMIN = "Admin"
+    PLANNING_MANAGER = "Planning Manager"
+    PROJECT_MANAGER = "Project Manager"
+    HQ_PROJECT_COORDINATOR = "HQ Project Coordinator"
 
 
 class RequisitionStatus(str, Enum):

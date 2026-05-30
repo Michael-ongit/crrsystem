@@ -365,7 +365,7 @@ def get_dropdown_options(
 def create_requisition(
     requisition: ConcreteRequisitionCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.EXECUTION, UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(UserRole.EXECUTION, *auth.OPERATIONAL_ACCESS_ROLES)),
 ):
     """
     Create a new concrete requisition.
@@ -505,7 +505,7 @@ def resubmit_sent_back_requisition(
     supply_id: str,
     requisition: ConcreteRequisitionCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.EXECUTION, UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(UserRole.EXECUTION, *auth.OPERATIONAL_ACCESS_ROLES)),
 ):
     """
     Update the existing requisition after Planning sends it back.
@@ -525,7 +525,7 @@ def resubmit_sent_back_requisition(
                 detail=f"Requisition with supply_id '{supply_id}' not found"
             )
 
-        if current_user.role != UserRole.ADMIN and db_requisition.in_charge_id != current_user.id:
+        if current_user.role not in auth.OPERATIONAL_ACCESS_ROLES and db_requisition.in_charge_id != current_user.id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You can only resubmit requisitions assigned to you"
@@ -597,7 +597,7 @@ def validate_requisition(
     supply_id: str,
     validation: PlanningValidationCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(auth.require_roles(UserRole.PLANNING, UserRole.ADMIN)),
+    current_user: User = Depends(auth.require_roles(UserRole.PLANNING, *auth.OPERATIONAL_ACCESS_ROLES)),
 ):
     """
     Validate a concrete requisition by the Planning team.

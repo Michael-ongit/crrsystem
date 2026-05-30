@@ -18,42 +18,45 @@ const Layout: React.FC<LayoutProps> = ({
 }) => {
   const location = useLocation();
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const fullAccessRoles = [UserRole.ADMIN, UserRole.PLANNING_MANAGER];
+  const operationalAccessRoles = [...fullAccessRoles, UserRole.HQ_PROJECT_COORDINATOR];
+  const dashboardRoles = [...operationalAccessRoles, UserRole.PROJECT_MANAGER];
 
   const navItems = [
     {
       label: 'Execution',
       path: '/execution',
-      allowedRoles: [UserRole.EXECUTION, UserRole.ADMIN],
+      allowedRoles: [UserRole.EXECUTION, ...operationalAccessRoles],
       icon: 'EX',
     },
     {
       label: 'Planning',
       path: '/planning',
-      allowedRoles: [UserRole.PLANNING, UserRole.ADMIN],
+      allowedRoles: [UserRole.PLANNING, ...operationalAccessRoles],
       icon: 'PL',
     },
     {
       label: 'Production',
       path: '/production',
-      allowedRoles: [UserRole.PRODUCTION, UserRole.ADMIN],
+      allowedRoles: [UserRole.PRODUCTION, ...operationalAccessRoles],
       icon: 'PR',
     },
     {
       label: 'Dispatch Summary',
       path: '/dispatch-summary',
-      allowedRoles: [UserRole.EXECUTION, UserRole.ADMIN],
+      allowedRoles: [UserRole.EXECUTION, ...operationalAccessRoles],
       icon: 'DS',
     },
     {
       label: 'Dashboard',
       path: '/dashboard',
-      allowedRoles: [UserRole.ADMIN],
+      allowedRoles: dashboardRoles,
       icon: 'DB',
     },
     {
       label: 'Admin',
       path: '/admin',
-      allowedRoles: [UserRole.ADMIN],
+      allowedRoles: fullAccessRoles,
       icon: 'AD',
     },
   ];

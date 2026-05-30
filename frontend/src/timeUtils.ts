@@ -86,6 +86,8 @@ export const toTimeInputIST = (value?: string | Date | null) => {
   return `${parts.hour}:${parts.minute}`;
 };
 
+export const TIME_INPUT_STEP_SECONDS = 300;
+
 export const toDateTimeLocalInputIST = (value?: string | Date | null) =>
   `${toDateInputIST(value)}T${toTimeInputIST(value)}`;
 

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Select from 'react-select';
+import CreatableSelect from 'react-select/creatable';
 import { adminAPI, hierarchyAPI } from '../api';
 import {
   AdminSummary,
@@ -13,6 +14,7 @@ import {
 type AdminTab = 'overview' | 'access' | 'dropdowns' | 'reference';
 type DropdownCategory = 'concrete_grade' | 'placement_by' | 'vehicle_number' | 'difference_reason';
 type ReferenceSortField = 'location' | 'structure_type' | 'structure_name' | 'structure_id' | 'element_id';
+type ReferenceValues = Record<ReferenceSortField, string>;
 const emptyReferenceFilters: Record<ReferenceSortField, string> = {
   location: '',
   structure_type: '',
@@ -56,6 +58,25 @@ const toOptions = (values: string[]): SelectOption[] =>
   Array.from(new Set(values.filter(Boolean)))
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
     .map((value) => ({ value, label: value }));
+
+const optionFor = (options: SelectOption[], value?: string) =>
+  options.find((option) => option.value === value) || (value ? { value, label: value } : null);
+
+const referenceFieldOrder: ReferenceSortField[] = [
+  'location',
+  'structure_type',
+  'structure_name',
+  'structure_id',
+  'element_id',
+];
+
+const emptyReferenceOptionState: Record<ReferenceSortField, SelectOption[]> = {
+  location: [],
+  structure_type: [],
+  structure_name: [],
+  structure_id: [],
+  element_id: [],
+};
 
 const selectClassNames = {
   control: (state: any) =>
@@ -108,13 +129,12 @@ const AdminView: React.FC = () => {
     field: 'location',
     direction: 'asc',
   });
-  const [allReferenceFilterOptions, setAllReferenceFilterOptions] = useState<Record<ReferenceSortField, SelectOption[]>>({
-    location: [],
-    structure_type: [],
-    structure_name: [],
-    structure_id: [],
-    element_id: [],
-  });
+  const [allReferenceFilterOptions, setAllReferenceFilterOptions] =
+    useState<Record<ReferenceSortField, SelectOption[]>>(emptyReferenceOptionState);
+  const [referenceFormOptions, setReferenceFormOptions] =
+    useState<Record<ReferenceSortField, SelectOption[]>>(emptyReferenceOptionState);
+  const [referenceFilterOptions, setReferenceFilterOptions] =
+    useState<Record<ReferenceSortField, SelectOption[]>>(emptyReferenceOptionState);
   const [dropdownCategory, setDropdownCategory] = useState<DropdownCategory>('concrete_grade');
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [editingInviteId, setEditingInviteId] = useState<string | null>(null);
@@ -141,7 +161,7 @@ const AdminView: React.FC = () => {
     sort_order: 0,
     is_active: true,
   });
-  const [referenceForm, setReferenceForm] = useState<Omit<RequisitionElementOption, 'id'>>({
+  const [referenceForm, setReferenceForm] = useState<ReferenceValues>({
     location: '',
     structure_type: '',
     structure_name: '',
@@ -172,13 +192,16 @@ const AdminView: React.FC = () => {
       setInvites(inviteData);
       setDropdowns(dropdownData);
       setLocationOptions(toOptions(locations));
-      setAllReferenceFilterOptions({
+      const nextReferenceOptions = {
         location: toOptions(referenceOptionData[0]),
         structure_type: toOptions(referenceOptionData[1]),
         structure_name: toOptions(referenceOptionData[2]),
         structure_id: toOptions(referenceOptionData[3]),
         element_id: toOptions(referenceOptionData[4]),
-      });
+      };
+      setAllReferenceFilterOptions(nextReferenceOptions);
+      setReferenceFilterOptions(nextReferenceOptions);
+      setReferenceFormOptions(nextReferenceOptions);
     } catch (error) {
       console.error('Failed to load admin data:', error);
       setMessage({ type: 'error', text: 'Failed to load admin data.' });
@@ -209,12 +232,115 @@ const AdminView: React.FC = () => {
     return () => window.clearTimeout(timeoutId);
   }, [dropdownCategory, dropdownSearch]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadFormCascade = async () => {
+      const [structureTypes, structureNames, structureIds, elementIds] = await Promise.all([
+        getCascadeOptions('structure_type', referenceForm),
+        getCascadeOptions('structure_name', referenceForm),
+        getCascadeOptions('structure_id', referenceForm),
+        getCascadeOptions('element_id', referenceForm),
+      ]);
+      if (cancelled) return;
+      setReferenceFormOptions({
+        location: allReferenceFilterOptions.location,
+        structure_type: structureTypes,
+        structure_name: structureNames,
+        structure_id: structureIds,
+        element_id: elementIds,
+      });
+    };
+
+    loadFormCascade().catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [allReferenceFilterOptions.location, referenceForm]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadFilterCascade = async () => {
+      const [structureTypes, structureNames, structureIds, elementIds] = await Promise.all([
+        getCascadeOptions('structure_type', referenceFilters),
+        getCascadeOptions('structure_name', referenceFilters),
+        getCascadeOptions('structure_id', referenceFilters),
+        getCascadeOptions('element_id', referenceFilters),
+      ]);
+      if (cancelled) return;
+      setReferenceFilterOptions({
+        location: allReferenceFilterOptions.location,
+        structure_type: structureTypes,
+        structure_name: structureNames,
+        structure_id: structureIds,
+        element_id: elementIds,
+      });
+    };
+
+    loadFilterCascade().catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [allReferenceFilterOptions.location, referenceFilters]);
+
   const registeredEmailSet = useMemo(
     () => new Set(users.map((user) => user.email.toLowerCase())),
     [users]
   );
 
   const selectedLocationOptions = (value: string) => toOptions(parseLocationList(value));
+
+  const getCascadeOptions = async (
+    field: ReferenceSortField,
+    values: ReferenceValues
+  ): Promise<SelectOption[]> => {
+    if (field === 'location') return allReferenceFilterOptions.location;
+    if (field === 'structure_type' && values.location) {
+      return toOptions(await hierarchyAPI.getStructureTypes(values.location));
+    }
+    if (field === 'structure_name' && values.location && values.structure_type) {
+      return toOptions(await hierarchyAPI.getStructureNames(values.location, values.structure_type));
+    }
+    if (field === 'structure_id' && values.location && values.structure_type && values.structure_name) {
+      return toOptions(await hierarchyAPI.getStructureIds(values.location, values.structure_type, values.structure_name));
+    }
+    if (field === 'element_id' && values.location && values.structure_type && values.structure_name && values.structure_id) {
+      return toOptions(await hierarchyAPI.getElementIds(
+        values.location,
+        values.structure_type,
+        values.structure_name,
+        values.structure_id
+      ));
+    }
+    return [];
+  };
+
+  const clearCascadeAfter = (
+    values: ReferenceValues,
+    field: ReferenceSortField
+  ) => {
+    const fieldIndex = referenceFieldOrder.indexOf(field);
+    return referenceFieldOrder.reduce<ReferenceValues>(
+      (next, currentField, index) => ({
+        ...next,
+        [currentField]: index > fieldIndex ? '' : values[currentField],
+      }),
+      values
+    );
+  };
+
+  const updateReferenceFilter = (field: ReferenceSortField, value: string) => {
+    const nextFilters = clearCascadeAfter(
+      {
+        ...referenceFiltersRef.current,
+        [field]: value,
+      },
+      field
+    );
+    referenceFiltersRef.current = nextFilters;
+    setReferenceFilters(nextFilters);
+  };
 
   const filteredReferenceRows = useMemo(() => {
     return [...referenceRows]
@@ -806,11 +932,52 @@ const AdminView: React.FC = () => {
           <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
             <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-[#134377]">Location / Structure Reference Data</h2>
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_1fr_1fr_1fr_1fr_120px]">
-              <input className={fieldClass} placeholder="Location" value={referenceForm.location} onChange={(event) => setReferenceForm((form) => ({ ...form, location: event.target.value }))} />
-              <input className={fieldClass} placeholder="Structure type" value={referenceForm.structure_type} onChange={(event) => setReferenceForm((form) => ({ ...form, structure_type: event.target.value }))} />
-              <input className={fieldClass} placeholder="Structure name" value={referenceForm.structure_name} onChange={(event) => setReferenceForm((form) => ({ ...form, structure_name: event.target.value }))} />
-              <input className={fieldClass} placeholder="Structure ID" value={referenceForm.structure_id} onChange={(event) => setReferenceForm((form) => ({ ...form, structure_id: event.target.value }))} />
-              <input className={fieldClass} placeholder="Element ID" value={referenceForm.element_id || ''} onChange={(event) => setReferenceForm((form) => ({ ...form, element_id: event.target.value }))} />
+              {([
+                ['location', 'Location'],
+                ['structure_type', 'Structure type'],
+                ['structure_name', 'Structure name'],
+                ['structure_id', 'Structure ID'],
+                ['element_id', 'Element ID'],
+              ] as Array<[ReferenceSortField, string]>).map(([field, label]) => (
+                <CreatableSelect
+                  key={field}
+                  classNames={selectClassNames}
+                  isClearable
+                  isSearchable
+                  placeholder={label}
+                  isDisabled={
+                    field === 'structure_type' ? !referenceForm.location :
+                    field === 'structure_name' ? !referenceForm.location || !referenceForm.structure_type :
+                    field === 'structure_id' ? !referenceForm.location || !referenceForm.structure_type || !referenceForm.structure_name :
+                    field === 'element_id' ? !referenceForm.location || !referenceForm.structure_type || !referenceForm.structure_name || !referenceForm.structure_id :
+                    false
+                  }
+                  options={referenceFormOptions[field]}
+                  value={optionFor(referenceFormOptions[field], referenceForm[field])}
+                  onChange={(option) => {
+                    setReferenceForm((form) =>
+                      clearCascadeAfter(
+                        {
+                          ...form,
+                          [field]: option?.value || '',
+                        },
+                        field
+                      )
+                    );
+                  }}
+                  onCreateOption={(value) => {
+                    setReferenceForm((form) =>
+                      clearCascadeAfter(
+                        {
+                          ...form,
+                          [field]: value,
+                        },
+                        field
+                      )
+                    );
+                  }}
+                />
+              ))}
               <button type="button" disabled={saving} onClick={saveReference} className={primaryButtonClass}>{editingReferenceId ? 'Update' : 'Add'}</button>
             </div>
             {editingReferenceId && (
@@ -864,16 +1031,16 @@ const AdminView: React.FC = () => {
                     isClearable
                     isSearchable
                     placeholder="All"
-                    options={allReferenceFilterOptions[field]}
-                    value={allReferenceFilterOptions[field].find((option) => option.value === referenceFilters[field]) || null}
-                    onChange={(option) => {
-                      const nextFilters = {
-                        ...referenceFiltersRef.current,
-                        [field]: option?.value || '',
-                      };
-                      referenceFiltersRef.current = nextFilters;
-                      setReferenceFilters(nextFilters);
-                    }}
+                    isDisabled={
+                      field === 'structure_type' ? !referenceFilters.location :
+                      field === 'structure_name' ? !referenceFilters.location || !referenceFilters.structure_type :
+                      field === 'structure_id' ? !referenceFilters.location || !referenceFilters.structure_type || !referenceFilters.structure_name :
+                      field === 'element_id' ? !referenceFilters.location || !referenceFilters.structure_type || !referenceFilters.structure_name || !referenceFilters.structure_id :
+                      false
+                    }
+                    options={referenceFilterOptions[field]}
+                    value={optionFor(referenceFilterOptions[field], referenceFilters[field])}
+                    onChange={(option) => updateReferenceFilter(field, option?.value || '')}
                   />
                 </label>
               ))}
